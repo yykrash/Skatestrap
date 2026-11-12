@@ -65,7 +65,7 @@ public static class Updater
                 catch { foreach (var t in temps) { try { File.Delete(t); } catch { } } throw; }
             }
 
-            // 3. the launcher itself ("launcher" key: launchers before 0.0.12 ignore it, and their new loader.exe swaps it in)
+            // 3. the launcher itself ("launcher" key: launchers before 0.0.12 ignore it; a loader-side swap was flagged by Defender, so they need the zip once)
             if (root.TryGetProperty("launcher", out var la) && await SelfUpdate(la, status)) return true;
             status("");
         }
