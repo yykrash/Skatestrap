@@ -82,7 +82,7 @@ public static class Launcher
         p.ErrorDataReceived += onLine;
         p.Exited += (_, _) =>
         {
-            p.WaitForExit(); lock (log) log.Dispose(); Running = null; Line?.Invoke($"-- loader exited ({p.ExitCode}) --");
+            p.WaitForExit(); lock (log) { log.WriteLine($"-- loader exited ({p.ExitCode}, 0x{p.ExitCode:X8}) --"); log.Dispose(); } Running = null; Line?.Invoke($"-- loader exited ({p.ExitCode}) --");
             if (s.SendLog) _ = SendLog(login, s.Username);
         };
         p.Start();

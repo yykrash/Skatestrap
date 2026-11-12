@@ -59,6 +59,7 @@ static void thread_exiting(void *ret) {
 typedef struct { StartFn fn; void *arg; HANDLE go; } Boot;
 static DWORD WINAPI thread_main(void *p) {
     Boot b = *(Boot *)p;
+    ULONG keep = 64 << 10; SetThreadStackGuarantee(&keep);  // room for the crash report if this thread overflows its stack
     WaitForSingleObject(b.go, INFINITE);  // the slot is filled in before the thread body runs
     CloseHandle(b.go);
     HeapFree(GetProcessHeap(), 0, p);
@@ -199,8 +200,8 @@ static SYSV int s_sem_wait(volatile LONG *s) {
     }
 }
 
-static SYSV void s_exit(int code) { fflush(0); ExitProcess(code); }  // shortcut: __cxa_atexit handlers not run
-static SYSV void s__exit(int code) { ExitProcess(code); }
+static SYSV void s_exit(int code) { printf("  exit(%d) called\n", code); fflush(0); ExitProcess(code); }  // shortcut: __cxa_atexit handlers not run
+static SYSV void s__exit(int code) { printf("  _exit(%d) called\n", code); fflush(stdout); ExitProcess(code); }
 
 static const struct { const char *name; void *at; } table[] = {
     { "pthread_create", s_pthread_create }, { "pthread_join", s_pthread_join }, { "pthread_detach", s_pthread_detach },

@@ -189,7 +189,10 @@ static LONG CALLBACK on_crash(EXCEPTION_POINTERS *e) {
     // owner; calling it a crash killed the process mid-exit and looped to a stack overflow (2026-11-11)
     if (code == 0xE06D7363 && !(rip >= (uint64_t)base && rip < (uint64_t)base + span)) return EXCEPTION_CONTINUE_SEARCH;
     static volatile LONG crashing;
-    if (InterlockedExchange(&crashing, 1)) TerminateProcess(GetCurrentProcess(), 4);  // a fault while reporting one: stop, don't recurse
+    if (InterlockedCompareExchange(&crashing, (LONG)GetCurrentThreadId(), 0)) {
+        if ((DWORD)crashing != GetCurrentThreadId()) Sleep(INFINITE);  // another thread is printing its report: let it finish
+        TerminateProcess(GetCurrentProcess(), 4);  // a fault while reporting one: stop, don't recurse
+    }
     if (rip >= (uint64_t)base && rip < (uint64_t)base + span)
         printf("\nCRASH %08lx in libroblox+%llx (rsp %llx)\n", code, (unsigned long long)(rip - (uint64_t)base), (unsigned long long)e->ContextRecord->Rsp);
     else
@@ -313,6 +316,35 @@ int main(int argc, char **argv) {
     printf("relocations: %zu packed + %llu plt; %zu traps\n", packed, (unsigned long long)(pltsz / 24), trap_used / 32);
     printf("fs sites rewritten: %zu\n", patch_fs(argv[2]));
     printf("raw syscall sites routed: %d of 16\n", route_raw_syscalls());
+    {   // FPS cap above 240: the engine clamps DFIntTaskSchedulerTargetFps to 240 in code
+        // (mov eax,[flag]; mov ecx,240; cmp eax,ecx; cmovl ecx,eax). Raise that 240 to the cap asked for.
+        const char *v = getenv("SKATESTRAP_FPS_CAP");
+        int want = !v ? 0 : strcmp(v, "unlimited") ? atoi(v) : 9999;
+        static const uint8_t pat[] = { 0xb9, 0xf0, 0, 0, 0, 0x39, 0xc8, 0x0f, 0x4c, 0xc8 };
+        int hits = 0;
+        for (int i = 0; want > 240 && i < eh->phnum; i++)
+            if (ph[i].type == PT_LOAD && (ph[i].flags & 1))
+                for (uint8_t *p = base + ph[i].vaddr + 6, *e = base + ph[i].vaddr + ph[i].filesz - sizeof pat; p < e; p++)
+                    if (p[0] == 0xb9 && p[-6] == 0x8b && p[-5] == 0x05 && !memcmp(p, pat, sizeof pat)) { memcpy(p + 1, &want, 4); hits++; }
+        if (want > 240) printf("fps limit sites raised to %d: %d (want 1)\n", want, hits);
+        // The in-game Max Frame Rate setting (60..240) is a separate "user cap" that wins over the flag.
+        // mov ebx,[rax+0x14c] -> mov ebx,-1 ("unlimited"), so the launcher's cap rules.
+        static const uint8_t uc[] = { 0x8b, 0x98, 0x4c, 0x01, 0, 0, 0xe8 }, unl[] = { 0xbb, 0xff, 0xff, 0xff, 0xff, 0x90 };
+        hits = 0;
+        for (int i = 0; want > 240 && i < eh->phnum; i++)
+            if (ph[i].type == PT_LOAD && (ph[i].flags & 1))
+                for (uint8_t *p = base + ph[i].vaddr, *e = base + ph[i].vaddr + ph[i].filesz - 13; p < e; p++)
+                    if (p[0] == 0x8b && !memcmp(p, uc, sizeof uc) && p[11] == 0x80 && p[12] == 0x3d) { memcpy(p, unl, sizeof unl); hits++; }
+        if (want > 240) printf("in-game fps setting overridden: %d (want 1)\n", hits);
+        // Frame pacer clamps the same flag again: mov eax,240; cmp r15d,eax; cmovae r15d,eax.
+        static const uint8_t pc[] = { 0xb8, 0xf0, 0, 0, 0, 0x41, 0x39, 0xc7, 0x44, 0x0f, 0x43, 0xf8 };
+        hits = 0;
+        for (int i = 0; want > 240 && i < eh->phnum; i++)
+            if (ph[i].type == PT_LOAD && (ph[i].flags & 1))
+                for (uint8_t *p = base + ph[i].vaddr, *e = base + ph[i].vaddr + ph[i].filesz - sizeof pc; p < e; p++)
+                    if (p[0] == 0xb8 && !memcmp(p, pc, sizeof pc)) { memcpy(p + 1, &want, 4); hits++; }
+        if (want > 240) printf("fps pacer limit raised: %d (want 1)\n", hits);
+    }
 
     DWORD old;
     for (int i = 0; i < eh->phnum; i++)

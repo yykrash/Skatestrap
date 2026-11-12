@@ -233,7 +233,7 @@ static int is_keyboard(Mid *m) { return !strcmp(m->name, "showKeyboard") || !str
 static int reads_args(void *o, Mid *m) { return is_audio_device(m) || is_raw_run(o, m) || is_keyboard(m); }
 void (*jni_on_raw_message)(void *callback, const char *utf);  // set by startup.c
 void (*jni_on_cookie_sync)(void);  // MainGameActivity.syncCookiesFromEngine: the app signed in (or out)
-void (*jni_on_keyboard)(int show, uint64_t handle, const char *utf, int len);  // set by startup.c
+void (*jni_on_keyboard)(int show, uint64_t handle, const char *utf, int len, void *info);  // set by startup.c
 
 // Calls into Java: (env, obj|cls, mid, ...) or nonvirtual (env, obj, cls, mid, ...).
 // Arguments (v: the first four, as 64-bit slots) are read only for the methods that use them (reads_args).
@@ -253,7 +253,7 @@ static uint64_t call(void *o, Mid *m, const uint64_t *v) {
     if (jni_on_keyboard && is_keyboard(m)) {
         if (!m->logged) { m->logged = 1; printf("JNI call %s.%s %s (answered)\n", m->cls->name, m->name, m->sig); }
         Arr *t = v && m->name[0] == 's' && is_obj((void *)v[2]) ? (Arr *)v[2] : 0;
-        jni_on_keyboard(m->name[0] == 's', v ? v[0] : 0, t ? t->data : "", t ? t->len : 0);
+        jni_on_keyboard(m->name[0] == 's', v ? v[0] : 0, t ? t->data : "", t ? t->len : 0, v && m->name[0] == 's' ? (void *)v[3] : 0);
         return 0;
     }
     if (!strcmp(m->name, "getBytes") && is_obj(o) && ((Obj *)o)->kind == K_STRING) {  // TextBox text back to the engine (UTF-8)
@@ -301,7 +301,45 @@ static SYSV double j_call_d(void *e, void *o, Mid *m) { return bits_d(call(o, m,
 static SYSV uint64_t j_call_nv(void *e, void *o, void *c, Mid *m) { return call(o, m, 0); }
 static SYSV float j_call_nv_f(void *e, void *o, void *c, Mid *m) { return bits_f(call(o, m, 0)); }
 static SYSV double j_call_nv_d(void *e, void *o, void *c, Mid *m) { return bits_d(call(o, m, 0)); }
-static SYSV Obj *j_NewObject(void *e, Cls *c, Mid *m) { log_id(m, "new"); return new_obj(c); }
+// NativeTextBoxInfo(FFFFFZIIIIIIZZZ): x, y, width, height, fontSize, multiline, xAlignment, yAlignment, textColor, ...
+// Android draws a focused TextBox's text with its own text field (the engine hides it), so Skatestrap keeps the box and colour to draw it
+static const char TBI[] = "com/roblox/engine/jni/model/NativeTextBoxInfo";
+static int is_tbi(Cls *c, Mid *m) { return c && !strcmp(c->name, TBI) && !strncmp(m->sig, "(FFFFFZIII", 10); }
+static Obj *tbi_new(Cls *c, const double *f, uint64_t color) {
+    static const char *fn[] = { "x", "y", "width", "height", "fontSize" };
+    Obj *o = new_obj(c);
+    for (int k = 0; k < 5; k++) set_float(o, fn[k], (float)f[k]);
+    field_set(o, "textColor", (uint32_t)color);
+    return o;
+}
+int jni_textbox_info(void *o, float r[5], uint32_t *color) {
+    static const char *fn[] = { "x", "y", "width", "height", "fontSize" };
+    if (!is_obj(o) || ((Obj *)o)->kind != K_OBJ || strcmp(cname(o), TBI)) return 0;
+    for (int k = 0; k < 5; k++) { uint32_t b = (uint32_t)field_get(o, fn[k]); memcpy(&r[k], &b, 4); }
+    *color = (uint32_t)field_get(o, "textColor");
+    return 1;
+}
+// (SysV varargs: floats arrive as doubles in xmm0-4; ints after the sixth register slot sit on the stack, so i3 = textColor)
+static SYSV Obj *j_NewObject(void *e, Cls *c, Mid *m, uint64_t i0, uint64_t i1, uint64_t i2,
+                             double f0, double f1, double f2, double f3, double f4, uint64_t i3) {
+    log_id(m, "new");
+    if (is_tbi(c, m)) { double f[5] = { f0, f1, f2, f3, f4 }; return tbi_new(c, f, i3); }
+    return new_obj(c);
+}
+static SYSV Obj *j_NewObjectV(void *e, Cls *c, Mid *m, SysvVa *va) {
+    log_id(m, "new");
+    if (!is_tbi(c, m)) return new_obj(c);
+    SysvVa a = *va; double f[5]; uint64_t i[4];
+    for (int k = 0; k < 5; k++) if (a.fp < 176) { memcpy(&f[k], a.save + a.fp, 8); a.fp += 16; } else { memcpy(&f[k], a.over, 8); a.over += 8; }
+    for (int k = 0; k < 4; k++) if (a.gp < 48) { memcpy(&i[k], a.save + a.gp, 8); a.gp += 8; } else { memcpy(&i[k], a.over, 8); a.over += 8; }
+    return tbi_new(c, f, i[3]);
+}
+static SYSV Obj *j_NewObjectA(void *e, Cls *c, Mid *m, const uint64_t *args) {  // jvalue[]: a float sits in the low 4 bytes
+    log_id(m, "new");
+    if (!is_tbi(c, m) || !args) return new_obj(c);
+    double f[5]; for (int k = 0; k < 5; k++) f[k] = bits_f(args[k]);
+    return tbi_new(c, f, args[8]);
+}
 static SYSV Obj *j_AllocObject(void *e, Cls *c) { return new_obj(c); }
 // a read of a field nobody set answers 0; log it once so the log shows what Roblox wants filled in
 static int field_has(void *o, const char *name) {
@@ -415,7 +453,7 @@ void *jni_vm(void) {
     SET(PushLocalFrame, j_zero) SET(PopLocalFrame, j_PopLocalFrame) SET(NewGlobalRef, j_same) SET(DeleteGlobalRef, j_nop)
     SET(DeleteLocalRef, j_nop) SET(IsSameObject, j_IsSameObject) SET(NewLocalRef, j_same) SET(EnsureLocalCapacity, j_zero)
     SET(NewWeakGlobalRef, j_same) SET(DeleteWeakGlobalRef, j_nop) SET(GetObjectRefType, j_GetObjectRefType)
-    SET(AllocObject, j_AllocObject) SET(NewObject, j_NewObject) SET(NewObjectV, j_NewObject) SET(NewObjectA, j_NewObject)
+    SET(AllocObject, j_AllocObject) SET(NewObject, j_NewObject) SET(NewObjectV, j_NewObjectV) SET(NewObjectA, j_NewObjectA)
     SET(GetObjectClass, j_GetObjectClass) SET(IsInstanceOf, j_IsInstanceOf)
     SET(GetMethodID, j_GetMethodID) SET(GetStaticMethodID, j_GetStaticMethodID)
     SET(GetFieldID, j_GetFieldID) SET(GetStaticFieldID, j_GetStaticFieldID)

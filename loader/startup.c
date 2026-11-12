@@ -138,16 +138,65 @@ static SRWLOCK tb_lock = SRWLOCK_INIT;
 static int64_t tb_handle;  // 0 = no TextBox focused
 static DWORD tb_at;        // when it took focus: keys typed before that are not for it
 static WCHAR tb_text[1024]; static int tb_len;
-static void on_keyboard(int show, uint64_t handle, const char *utf, int len) {
+static float tb_box[5]; static uint32_t tb_color;  // NativeTextBoxInfo: x, y, w, h, font size (game pixels), ARGB
+#define WM_TB_DRAW (WM_APP + 7)
+void *skate_window_hwnd(void); float skate_render_scale(void);
+// The engine hides a focused TextBox's text on Android (the app's own text field draws it there), so draw it ourselves:
+// a click-through layered popup over the box, text in the TextBox colour with per-pixel alpha. Window thread only.
+// shortcut: one line, Segoe UI, left-aligned, end kept in view; no caret/selection (cursor is always at the end).
+static void tb_draw(void) {
+    static HWND pop;
+    HWND game = skate_window_hwnd();
+    if (!game) return;
+    if (!pop) {
+        WNDCLASSW wc = { .lpfnWndProc = DefWindowProcW, .hInstance = GetModuleHandleW(0), .lpszClassName = L"SkatestrapText" };
+        RegisterClassW(&wc);
+        pop = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"SkatestrapText", L"",
+                              WS_POPUP, 0, 0, 1, 1, game, 0, wc.hInstance, 0);
+        if (!pop) return;
+    }
+    AcquireSRWLockShared(&tb_lock);
+    float k = skate_render_scale(), b[5]; memcpy(b, tb_box, sizeof b);
+    int on = tb_handle && b[2] >= 2 && b[3] >= 2, n = tb_len; uint32_t col = tb_color; WCHAR t[1024]; memcpy(t, tb_text, n * sizeof *t);
+    ReleaseSRWLockShared(&tb_lock);
+    if (!on || IsIconic(game)) { ShowWindow(pop, SW_HIDE); return; }
+    POINT at = { (LONG)(b[0] / k), (LONG)(b[1] / k) }; ClientToScreen(game, &at);
+    int w = (int)(b[2] / k), h = (int)(b[3] / k), fh = (int)((b[4] > 1 ? b[4] : b[3] * 0.6f) / k);
+    if (fh < 8) fh = 8;
+    if (fh > h) fh = h;
+    if (!col) col = 0xffffffff;
+    BITMAPINFO bi = { { sizeof bi.bmiHeader, w, -h, 1, 32, BI_RGB } }; uint32_t *px;
+    HDC dc = CreateCompatibleDC(0); HBITMAP bm = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, (void **)&px, 0, 0);
+    if (!bm) { DeleteDC(dc); return; }
+    HGDIOBJ obm = SelectObject(dc, bm);
+    HFONT f = CreateFontW(-fh, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI"), of = SelectObject(dc, f);
+    SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(255, 255, 255));  // white on black = coverage, coloured below
+    SIZE sz = { 0 }; GetTextExtentPoint32W(dc, t, n, &sz);
+    int pad = h / 8, x = sz.cx + 2 * pad > w ? w - pad - sz.cx : pad;  // too long: keep the end (where typing happens) in view
+    TextOutW(dc, x, (h - sz.cy) / 2, t, n);
+    GdiFlush();
+    uint32_t r = (col >> 16) & 255, g = (col >> 8) & 255, bl = col & 255;
+    for (int i = 0; i < w * h; i++) { uint32_t a = px[i] & 255; px[i] = a << 24 | (r * a / 255) << 16 | (g * a / 255) << 8 | bl * a / 255; }
+    POINT zero = { 0 }; SIZE s = { w, h }; BLENDFUNCTION bf = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    UpdateLayeredWindow(pop, 0, &at, &s, dc, &zero, 0, &bf, ULW_ALPHA);
+    SetWindowPos(pop, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SelectObject(dc, of); DeleteObject(f); SelectObject(dc, obm); DeleteObject(bm); DeleteDC(dc);
+}
+static void on_keyboard(int show, uint64_t handle, const char *utf, int len, void *info) {
+    int jni_textbox_info(void *, float[5], uint32_t *);
     AcquireSRWLockExclusive(&tb_lock);
     tb_handle = show ? (int64_t)handle : 0; tb_at = GetTickCount();
     tb_len = show && len > 0 ? MultiByteToWideChar(CP_UTF8, 0, utf, len, tb_text, 1023) : 0;
+    if (!show || !jni_textbox_info(info, tb_box, &tb_color)) memset(tb_box, 0, sizeof tb_box);
     ReleaseSRWLockExclusive(&tb_lock);
+    if (show) printf("  textbox: focus %.0f,%.0f %.0fx%.0f size %.0f colour %08x\n", tb_box[0], tb_box[1], tb_box[2], tb_box[3], tb_box[4], tb_color);
+    HWND g = skate_window_hwnd(); if (g) PostMessageW(g, WM_TB_DRAW, 0, 0);  // engine thread: the window thread draws
 }
 static void tb_send(int64_t h, int finished) {
     char u[4096]; int n = WideCharToMultiByte(CP_UTF8, 0, tb_text, tb_len, u, sizeof u - 1, 0, 0); u[n] = 0;
     tb_sync(in_env, in_gl, jni_string(u), tb_len);
     tb_pass(in_env, in_gl, h, jni_string(u), finished, tb_len);
+    tb_draw();
 }
 // one character (or Enter / Backspace) typed while a TextBox has focus; 0 = no TextBox, send it as a key
 static int tb_char(WCHAR c) {
@@ -157,6 +206,7 @@ static int tb_char(WCHAR c) {
         char u[4096]; int n = WideCharToMultiByte(CP_UTF8, 0, tb_text, tb_len, u, sizeof u - 1, 0, 0); u[n] = 0;
         tb_sync(in_env, in_gl, jni_string(u), tb_len);  // Mocktail's order: sync, return, final text, clear
         tb_return(in_env, in_gl, h); tb_pass(in_env, in_gl, h, jni_string(u), 1, tb_len); tb_len = 0;
+        tb_draw();
         return 1;
     }
     if (c == 8) { if (tb_len) tb_len--; if (tb_len && IS_LOW_SURROGATE(tb_text[tb_len])) tb_len--; }
@@ -170,6 +220,8 @@ static int on_input(UINT m, WPARAM wp, LPARAM lp) {
     float skate_render_scale(void), k = skate_render_scale();  // the game's pixels, not the window's
     float x = (float)(short)LOWORD(lp) * k, y = (float)(short)HIWORD(lp) * k;
     switch (m) {
+    case WM_TB_DRAW: tb_draw(); return 1;
+    case WM_MOVE: case WM_SIZE: if (tb_handle) tb_draw(); return 0;  // keep the typed text on its box
     case WM_MOUSEMOVE: if (in_move) in_move(in_env, in_cls, x, y, x - lx, y - ly); lx = x; ly = y; return 1;
     case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP: {
         int down = m == WM_LBUTTONDOWN || m == WM_RBUTTONDOWN || m == WM_MBUTTONDOWN;
@@ -189,8 +241,8 @@ static int on_input(UINT m, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP: {
         int s = (lp >> 16) & 0xff, ev = lp & (1 << 24) ? ext_scan(s) : s;
         if (wp == VK_F4 && (m == WM_SYSKEYDOWN)) return 0;  // let Alt+F4 close the window
-        if (tb_handle && tb_pass && m == WM_KEYDOWN) {  // a TextBox has focus: keys type text (WM_CHAR), not move the skater
-            if (wp == VK_ESCAPE) { int64_t h = tb_handle; tb_release(in_env, in_gl, h); on_keyboard(0, 0, 0, 0); }
+        if (tb_handle && tb_pass && m == WM_KEYDOWN) {  // a TextBox has focus: keys type text (WM_CHAR), not move the character
+            if (wp == VK_ESCAPE) { int64_t h = tb_handle; tb_release(in_env, in_gl, h); on_keyboard(0, 0, 0, 0, 0); }
             else if (wp == 'V' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 && OpenClipboard(0)) {
                 HANDLE ch = GetClipboardData(CF_UNICODETEXT); const WCHAR *t = ch ? GlobalLock(ch) : 0;
                 for (int i = 0; t && t[i] && t[i] != 13 && t[i] != 10 && tb_len < 1023; i++) tb_text[tb_len++] = t[i];
@@ -467,11 +519,12 @@ static const char *fps_overrides(void) {
         printf("  start-up: perf overrides on (%d physical cores)\n", w);
     }
     const char *v = getenv("SKATESTRAP_FPS_CAP");
-    int n = !v ? 0 : strcmp(v, "unlimited") ? atoi(v) : 240;  // 240 = Mocktail kMaximumSupportedRobloxSchedulerFps
+    int n = !v ? 0 : strcmp(v, "unlimited") ? atoi(v) : 9999;  // unlimited: past Roblox's 240 limit (LimitTargetFpsTo2402 off below)
     if (v && n <= 0) printf("  start-up: SKATESTRAP_FPS_CAP=%s ignored (want a number or unlimited)\n", v);
     if (n > 0) {
-        o += snprintf(s + o, sizeof s - o, ",\"FFlagGameBasicSettingsFramerateCap5\":\"True\",\"DFIntTaskSchedulerTargetFps\":\"%d\"%s",
-                      n, n > 240 ? ",\"FFlagTaskSchedulerLimitTargetFpsTo2402\":\"False\"" : "");
+        // above 240 the in-game "Maximum Frame Rate" menu (tops out at 240) must be off, or it wins over the target
+        o += snprintf(s + o, sizeof s - o, ",\"FFlagGameBasicSettingsFramerateCap5\":\"%s\",\"DFIntTaskSchedulerTargetFps\":\"%d\"%s",
+                      n > 240 ? "False" : "True", n, n > 240 ? ",\"FFlagTaskSchedulerLimitTargetFpsTo2402\":\"False\"" : "");
         printf("  start-up: fps overrides target %d\n", n);
     }
     // SKATESTRAP_FLAGS_FILE=path: the user's own flags (a flat JSON object, e.g. from Skatestrap), added last so they win
@@ -809,7 +862,7 @@ void skatestrap_startup(void) {
         tb_pass = need(GL "nativePassText"); tb_sync = need(GL "syncTextboxTextAndCursorPosition2");
         tb_return = need(GL "nativeReturnPressedFromOnScreenKeyboard"); tb_release = need(GL "nativeReleaseFocus");
         if (!tb_sync || !tb_return || !tb_release) tb_pass = 0;
-        { extern void (*jni_on_keyboard)(int, uint64_t, const char *, int); jni_on_keyboard = on_keyboard; }
+        { extern void (*jni_on_keyboard)(int, uint64_t, const char *, int, void *); jni_on_keyboard = on_keyboard; }
         snprintf(nm, sizeof nm, "%snativeSetGamepadSupportedKeyWithGamepadType", inp); gp_key = need(nm);
         snprintf(nm, sizeof nm, "%snativeSetGamepadSupportedMotionWithGamepadType", inp); gp_motion = need(nm);
         snprintf(nm, sizeof nm, "%snativeGamepadConnectEventWithGamepadType", inp); gp_connect = need(nm);
