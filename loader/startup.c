@@ -105,6 +105,66 @@ static SYSV void (*in_button)(void *, void *, float, float, uint8_t, int32_t);
 static SYSV void (*in_wheel)(void *, void *, float, float, float);
 static SYSV void (*in_key)(void *, void *, uint8_t, int32_t, int32_t, uint8_t);
 static int skate_input_on;
+static void key_tap(int ev, int down) { if (android_key[ev]) in_key(in_env, in_gl, down, ev, android_key[ev], 0); }
+// Ctrl+V: the Android app has no paste from a PC keyboard, so type the Windows clipboard as key presses.
+// shortcut: only characters the keyboard layout can type (no emoji / other scripts), first line only, 500 max.
+static void paste_clipboard(void) {
+    if (!OpenClipboard(0)) return;
+    HANDLE h = GetClipboardData(CF_UNICODETEXT); const WCHAR *t = h ? GlobalLock(h) : 0;
+    int lctrl = GetKeyState(VK_LCONTROL) < 0, rctrl = GetKeyState(VK_RCONTROL) < 0;
+    if (lctrl) key_tap(29, 0);
+    if (rctrl) key_tap(97, 0);  // let go of Ctrl so the letters are not shortcuts
+    for (int i = 0; t && t[i] && t[i] != 13 && t[i] != 10 && i < 500; i++) {
+        SHORT k = VkKeyScanW(t[i]);
+        if (k == -1 || (k & 0x600)) continue;  // not on this layout, or needs Ctrl/Alt
+        int ev = MapVirtualKeyW(k & 0xff, MAPVK_VK_TO_VSC);
+        if (ev <= 0 || ev >= 128 || !android_key[ev]) continue;
+        if (k & 0x100) key_tap(42, 1);
+        key_tap(ev, 1); key_tap(ev, 0);
+        if (k & 0x100) key_tap(42, 0);
+    }
+    if (lctrl) key_tap(29, 1);
+    if (rctrl) key_tap(97, 1);
+    if (t) GlobalUnlock(h);
+    CloseClipboard();
+}
+// Roblox TextBoxes (chat): Android types into them through its on-screen keyboard (passText), not key events.
+// Engine calls showKeyboard on focus and hideKeyboard on blur (jni.c); typed text goes back the way Mocktail's
+// roblox_text_editor.cc does it. shortcut: cursor always at the end (no arrow keys / selection), add when asked.
+static SYSV void (*tb_pass)(void *, void *, int64_t, void *, uint8_t, int32_t);
+static SYSV void (*tb_sync)(void *, void *, void *, int32_t);
+static SYSV void (*tb_return)(void *, void *, int64_t), (*tb_release)(void *, void *, int64_t);
+static SRWLOCK tb_lock = SRWLOCK_INIT;
+static int64_t tb_handle;  // 0 = no TextBox focused
+static DWORD tb_at;        // when it took focus: keys typed before that are not for it
+static WCHAR tb_text[1024]; static int tb_len;
+static void on_keyboard(int show, uint64_t handle, const char *utf, int len) {
+    AcquireSRWLockExclusive(&tb_lock);
+    tb_handle = show ? (int64_t)handle : 0; tb_at = GetTickCount();
+    tb_len = show && len > 0 ? MultiByteToWideChar(CP_UTF8, 0, utf, len, tb_text, 1023) : 0;
+    ReleaseSRWLockExclusive(&tb_lock);
+}
+static void tb_send(int64_t h, int finished) {
+    char u[4096]; int n = WideCharToMultiByte(CP_UTF8, 0, tb_text, tb_len, u, sizeof u - 1, 0, 0); u[n] = 0;
+    tb_sync(in_env, in_gl, jni_string(u), tb_len);
+    tb_pass(in_env, in_gl, h, jni_string(u), finished, tb_len);
+}
+// one character (or Enter / Backspace) typed while a TextBox has focus; 0 = no TextBox, send it as a key
+static int tb_char(WCHAR c) {
+    AcquireSRWLockShared(&tb_lock); int64_t h = tb_handle; ReleaseSRWLockShared(&tb_lock);
+    if (!h || !tb_pass) return 0;
+    if (c == 13) {
+        char u[4096]; int n = WideCharToMultiByte(CP_UTF8, 0, tb_text, tb_len, u, sizeof u - 1, 0, 0); u[n] = 0;
+        tb_sync(in_env, in_gl, jni_string(u), tb_len);  // Mocktail's order: sync, return, final text, clear
+        tb_return(in_env, in_gl, h); tb_pass(in_env, in_gl, h, jni_string(u), 1, tb_len); tb_len = 0;
+        return 1;
+    }
+    if (c == 8) { if (tb_len) tb_len--; if (tb_len && IS_LOW_SURROGATE(tb_text[tb_len])) tb_len--; }
+    else if (c >= 32 && c != 127 && tb_len < 1023) tb_text[tb_len++] = c;
+    else return 1;
+    tb_send(h, 0);
+    return 1;
+}
 static int on_input(UINT m, WPARAM wp, LPARAM lp) {
     static float lx, ly;
     float skate_render_scale(void), k = skate_render_scale();  // the game's pixels, not the window's
@@ -123,11 +183,25 @@ static int on_input(UINT m, WPARAM wp, LPARAM lp) {
         if (in_wheel) in_wheel(in_env, in_cls, pt.x * k, pt.y * k,GET_WHEEL_DELTA_WPARAM(wp) / 120.f);
         return 1;
     }
+    case WM_CHAR:
+        if ((DWORD)GetMessageTime() - tb_at > 0x80000000u) return 1;  // typed before the TextBox took focus (the chat key)
+        return tb_char((WCHAR)wp);
     case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP: {
         int s = (lp >> 16) & 0xff, ev = lp & (1 << 24) ? ext_scan(s) : s;
         if (wp == VK_F4 && (m == WM_SYSKEYDOWN)) return 0;  // let Alt+F4 close the window
+        if (tb_handle && tb_pass && m == WM_KEYDOWN) {  // a TextBox has focus: keys type text (WM_CHAR), not move the skater
+            if (wp == VK_ESCAPE) { int64_t h = tb_handle; tb_release(in_env, in_gl, h); on_keyboard(0, 0, 0, 0); }
+            else if (wp == 'V' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 && OpenClipboard(0)) {
+                HANDLE ch = GetClipboardData(CF_UNICODETEXT); const WCHAR *t = ch ? GlobalLock(ch) : 0;
+                for (int i = 0; t && t[i] && t[i] != 13 && t[i] != 10 && tb_len < 1023; i++) tb_text[tb_len++] = t[i];
+                if (t) { GlobalUnlock(ch); tb_send(tb_handle, 0); }
+                CloseClipboard();
+            }
+            return 1;  // (key-ups still go through, so nothing held before the focus sticks)
+        }
         if (ev <= 0 || ev >= 128 || !android_key[ev] || !in_key) return 0;
         int down = m == WM_KEYDOWN || m == WM_SYSKEYDOWN, repeat = down && (lp & (1 << 30));
+        if (wp == 'V' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0) { if (down && !repeat) paste_clipboard(); return 1; }
         in_key(in_env, in_gl, down, ev, android_key[ev], repeat);
         return 1;
     }
@@ -500,12 +574,18 @@ static void on_raw_message(void *callback, const char *utf) {
 static void on_cookie_sync(void) {
     const char *path = getenv("SKATESTRAP_LOGIN_FILE");
     typedef SYSV void *(*FnGet)(void *, void *, void *);
-    FnGet get = path ? (FnGet)need("Java_com_roblox_engine_jni_NativeSettingsInterface_nativeGetCookiesForDomain") : 0;
+    static FnGet get; if (!get && path) get = (FnGet)need("Java_com_roblox_engine_jni_NativeSettingsInterface_nativeGetCookiesForDomain");
+    if (!path) return;
     extern const char *jni_utf(void *);
     const char *all = get ? jni_utf(get(jni_env(), jni_class("com/roblox/engine/jni/NativeSettingsInterface"), jni_string("https://www.roblox.com/"))) : 0;
-    const char *p = all ? strstr(all, ".ROBLOSECURITY=") : 0;
+    // the engine answers "name=value; ..." or cookie-jar lines ("domain\tTRUE\t/\tFALSE\texpiry\tname\tvalue")
+    const char *p = all ? strstr(all, ".ROBLOSECURITY=") : 0, *jar = all ? strstr(all, "\t.ROBLOSECURITY\t") : 0;
+    if (p) p += 15; else if (jar) p = jar + 16;
+    {   // log when a signed-in session appears or goes (never the value)
+        static int had = -1; int has = p != 0;
+        if (has != had) { had = has; printf("  login: %s\n", has ? "Roblox has a signed-in session" : "no signed-in session yet"); fflush(stdout); }
+    }
     if (!p) return;  // shortcut: signing out in the app keeps login.bin; the launcher's Log out button removes it
-    p += 15;
     size_t n = strcspn(p, ";\r\n\t ");
     static size_t saved_n; static char saved_hash[32];
     char h[32] = { 0 }; for (size_t i = 0; i < n; i++) h[i % 32] ^= p[i];  // skip rewriting the same session on every sync
@@ -726,6 +806,10 @@ void skatestrap_startup(void) {
         snprintf(nm, sizeof nm, "%snativePassMouseButton", inp); in_button = need(nm);
         snprintf(nm, sizeof nm, "%snativePassMouseWheel", inp); in_wheel = need(nm);
         in_key = need(GL "nativePassKeyEvent");
+        tb_pass = need(GL "nativePassText"); tb_sync = need(GL "syncTextboxTextAndCursorPosition2");
+        tb_return = need(GL "nativeReturnPressedFromOnScreenKeyboard"); tb_release = need(GL "nativeReleaseFocus");
+        if (!tb_sync || !tb_return || !tb_release) tb_pass = 0;
+        { extern void (*jni_on_keyboard)(int, uint64_t, const char *, int); jni_on_keyboard = on_keyboard; }
         snprintf(nm, sizeof nm, "%snativeSetGamepadSupportedKeyWithGamepadType", inp); gp_key = need(nm);
         snprintf(nm, sizeof nm, "%snativeSetGamepadSupportedMotionWithGamepadType", inp); gp_motion = need(nm);
         snprintf(nm, sizeof nm, "%snativeGamepadConnectEventWithGamepadType", inp); gp_connect = need(nm);
@@ -765,6 +849,8 @@ void skatestrap_startup(void) {
             }
         }
         { static ULONGLONG gp_at; ULONGLONG t = GetTickCount64(); if (skate_input_on && t - gp_at >= 4) { gp_at = t; gamepad_poll(); } }
+        // the app does not always call syncCookiesFromEngine after sign-in: look every 5 s (saves only when the session changes)
+        { static DWORD ck_at; if (skate_input_on && GetTickCount() - ck_at >= 5000) { ck_at = GetTickCount(); on_cookie_sync(); } }
         if (place && (int)(GetTickCount() - join_at) > 0) { if (join_game(_atoi64(place), 0)) in_game = 1; place = 0; }
         if (launch_json) {  // a game picked in the app
             AcquireSRWLockExclusive(&launch_lock); char *j = launch_json; launch_json = 0; ReleaseSRWLockExclusive(&launch_lock);

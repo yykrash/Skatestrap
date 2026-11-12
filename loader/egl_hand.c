@@ -96,7 +96,7 @@ int skate_resize_pending(int *w, int *h) {
 SkateWindow *skate_window_create(int w, int h) {
     if (g_win.hwnd) return &g_win;
     WNDCLASSW wc = { .style = CS_OWNDC, .lpfnWndProc = win_proc, .hInstance = GetModuleHandleW(0), .lpszClassName = L"Skatestrap",
-                     .hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW) };
+                     .hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW), .hIcon = LoadIconW(GetModuleHandleW(0), MAKEINTRESOURCEW(1)) };  // icon: loader.rc
     RegisterClassW(&wc);
     RECT r = { 0, 0, w, h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, 0);

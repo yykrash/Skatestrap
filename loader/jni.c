@@ -228,13 +228,17 @@ static int is_audio_device(Mid *m) { return !strcmp(m->cls->name, "org/fmod/Audi
 // MessageBus.doSubscribeRaw hands its messages to RawCallback.run(String) (Mocktail jnivm DispatchMessageBusRawCallback)
 static const char RAW_CALLBACK[] = "com/roblox/universalapp/messagebus/RawCallback";
 static int is_raw_run(void *o, Mid *m) { return !strcmp(m->name, "run") && (!strcmp(m->cls->name, RAW_CALLBACK) || (is_obj(o) && !strcmp(cname(o), RAW_CALLBACK))); }
-static int reads_args(void *o, Mid *m) { return is_audio_device(m) || is_raw_run(o, m); }
+// a Roblox TextBox took focus (showKeyboard: handle, ?, UTF-8 text, info) or let it go (hideKeyboard)
+static int is_keyboard(Mid *m) { return !strcmp(m->name, "showKeyboard") || !strcmp(m->name, "hideKeyboard"); }
+static int reads_args(void *o, Mid *m) { return is_audio_device(m) || is_raw_run(o, m) || is_keyboard(m); }
 void (*jni_on_raw_message)(void *callback, const char *utf);  // set by startup.c
 void (*jni_on_cookie_sync)(void);  // MainGameActivity.syncCookiesFromEngine: the app signed in (or out)
+void (*jni_on_keyboard)(int show, uint64_t handle, const char *utf, int len);  // set by startup.c
 
 // Calls into Java: (env, obj|cls, mid, ...) or nonvirtual (env, obj, cls, mid, ...).
 // Arguments (v: the first four, as 64-bit slots) are read only for the methods that use them (reads_args).
 static int field_has(void *o, const char *name);
+static Arr *new_array(const char *cls, int elem, jint n);
 static uint64_t call(void *o, Mid *m, const uint64_t *v) {
     if (v && is_raw_run(o, m)) {
         if (!m->logged) { m->logged = 1; printf("JNI call %s.%s %s (answered)\n", m->cls->name, m->name, m->sig); }
@@ -245,6 +249,17 @@ static uint64_t call(void *o, Mid *m, const uint64_t *v) {
     if (jni_on_cookie_sync && !strcmp(m->name, "syncCookiesFromEngine")) {
         if (!m->logged) { m->logged = 1; printf("JNI call %s.%s %s (answered)\n", m->cls->name, m->name, m->sig); }
         jni_on_cookie_sync(); return 0;
+    }
+    if (jni_on_keyboard && is_keyboard(m)) {
+        if (!m->logged) { m->logged = 1; printf("JNI call %s.%s %s (answered)\n", m->cls->name, m->name, m->sig); }
+        Arr *t = v && m->name[0] == 's' && is_obj((void *)v[2]) ? (Arr *)v[2] : 0;
+        jni_on_keyboard(m->name[0] == 's', v ? v[0] : 0, t ? t->data : "", t ? t->len : 0);
+        return 0;
+    }
+    if (!strcmp(m->name, "getBytes") && is_obj(o) && ((Obj *)o)->kind == K_STRING) {  // TextBox text back to the engine (UTF-8)
+        if (!m->logged) { m->logged = 1; printf("JNI call %s.%s %s (answered)\n", m->cls->name, m->name, m->sig); }
+        const char *u = ((Str *)o)->utf; int n = (int)strlen(u);
+        Arr *a = new_array("[B", 1, n); memcpy(a->data, u, n); return (uint64_t)a;
     }
     if (v && is_audio_device(m)) {
         if (!m->logged) { m->logged = 1; printf("JNI call %s.%s %s (answered)\n", m->cls->name, m->name, m->sig); }

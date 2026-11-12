@@ -42,7 +42,14 @@ public partial class PlayPage : Page
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { }
     }
 
-    void Running(bool on) { PlayButton.IsEnabled = !on; StopButton.IsEnabled = on; }
+    // the launcher steps aside while the game runs (minimized) and comes back when it closes
+    void Running(bool on)
+    {
+        PlayButton.IsEnabled = !on; StopButton.IsEnabled = on;
+        if (Window.GetWindow(this) is not { } w) return;  // (null while the page is being built)
+        if (on) w.WindowState = WindowState.Minimized;
+        else if (w.WindowState == WindowState.Minimized) { w.WindowState = WindowState.Normal; w.Activate(); }
+    }
 
     // name, maker, likes, players and picture from Roblox's public game APIs (no login sent)
     async Task LoadRecent()
