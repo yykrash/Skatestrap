@@ -14,6 +14,10 @@
         <ui:TextBlock Grid.Row="0" FontTypography="Title" Text="Play" Margin="0,0,0,12" />
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,4,0,8">
+            <ComboBox x:Name="AccountBox" Width="200" Height="40" VerticalContentAlignment="Center" ToolTip="Roblox account" SelectionChanged="Account_Changed" />
+            <ui:Button x:Name="RemoveButton" Height="40" Margin="4,0,8,0" ToolTip="Remove this account from Skatestrap" Click="Remove_Click">
+                <ui:Button.Icon><ui:SymbolIcon Symbol="Delete24" /></ui:Button.Icon>
+            </ui:Button>
             <ui:Button x:Name="PlayButton" Appearance="Primary" Content="Play" Width="140" Height="40" Click="Play_Click">
                 <ui:Button.Icon><ui:SymbolIcon Symbol="Play24" /></ui:Button.Icon>
             </ui:Button>

@@ -8,6 +8,7 @@ public class Settings
 {
     public string UserId { get; set; } = "";
     public string Username { get; set; } = "";
+    public Dictionary<string, string> Accounts { get; set; } = new();  // saved accounts: user id -> username (sign-ins in Login accounts\)
     public string Renderer { get; set; } = "vulkan";       // vulkan | angle | native
     public string FpsCap { get; set; } = "unlimited";      // "" = Roblox default, a number, or unlimited
     public bool PerfTweaks { get; set; } = true;           // SKATESTRAP_PERF (Mocktail throughput flags)

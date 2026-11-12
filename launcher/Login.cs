@@ -18,6 +18,15 @@ public static class Login
     public static bool Has => File.Exists(Saved);
     public static void Forget() => File.Delete(Saved);
 
+    // Account switcher: every account signed in here keeps its own DPAPI copy in accounts\<userId>.bin;
+    // switching copies it over login.bin (the one the game uses). Ids are Roblox user ids (digits only).
+    static string Account(string id) => id.Length > 0 && id.All(char.IsAsciiDigit) ? Path.Combine(Dir, "accounts", id + ".bin") : throw new ArgumentException("bad user id");
+    public static string[] Accounts() => Directory.Exists(Path.Combine(Dir, "accounts"))
+        ? Directory.GetFiles(Path.Combine(Dir, "accounts"), "*.bin").Select(f => Path.GetFileNameWithoutExtension(f)).ToArray() : [];
+    public static void Keep(string id) { Directory.CreateDirectory(Path.Combine(Dir, "accounts")); File.Copy(Saved, Account(id), true); }
+    public static void Use(string id) => File.Copy(Account(id), Saved, true);
+    public static void Drop(string id) => File.Delete(Account(id));
+
     public static string? Cookie()
     {
         try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(Saved), null, DataProtectionScope.CurrentUser)); }

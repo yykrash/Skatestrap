@@ -27,25 +27,79 @@ public partial class PlayPage : Page
             wasRunning = on; Running(on);
             if (!on) { LearnWho(); _ = LoadRecent(); }
         };
-        Loaded += (_, _) => { tick.Start(); _ = LoadRecent(); };
+        Loaded += (_, _) => { tick.Start(); _ = LoadRecent(); FillAccounts(); LearnWho(); };
         Unloaded += (_, _) => tick.Stop();
     }
 
     // sign-in happens on Roblox's own screen and lands in login.bin; look up who it is each time the game closes
-    // (the player may have switched account in the app)
+    // (the player may have switched account in the app), and keep it in the account list
     async void LearnWho()
     {
         var s = Settings.Current;
         var c = Login.Has ? Login.Cookie() : null;
-        if (c == null) { s.UserId = s.Username = ""; s.Save(); return; }
-        try { var who = await Launcher.WhoIs(c); if (who != null) { (s.UserId, s.Username) = who.Value; s.Save(); } }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { }
+        if (c == null) { s.UserId = s.Username = ""; s.Save(); FillAccounts(); return; }
+        try
+        {
+            var who = await Launcher.WhoIs(c);
+            if (who == null) return;
+            (s.UserId, s.Username) = who.Value;
+            Login.Keep(s.UserId); s.Accounts[s.UserId] = s.Username; s.Save();
+            FillAccounts();
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or System.IO.IOException or ArgumentException) { }
+    }
+
+    // the account picker: saved accounts (signed-in one selected) + "Add account"
+    bool filling;
+    void FillAccounts()
+    {
+        var s = Settings.Current;
+        filling = true;
+        AccountBox.Items.Clear();
+        foreach (var id in Login.Accounts())
+        {
+            var item = new ComboBoxItem { Content = s.Accounts.GetValueOrDefault(id, id), Tag = id };
+            AccountBox.Items.Add(item);
+            if (id == s.UserId && Login.Has) AccountBox.SelectedItem = item;
+        }
+        AccountBox.Items.Add(new ComboBoxItem { Content = "+ Add account" });
+        RemoveButton.IsEnabled = AccountBox.SelectedItem != null && Launcher.Running == null;
+        filling = false;
+    }
+
+    void Account_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (filling || AccountBox.SelectedItem is not ComboBoxItem item) return;
+        var s = Settings.Current;
+        try
+        {
+            if (item.Tag is string id) { Login.Use(id); s.UserId = id; s.Username = s.Accounts.GetValueOrDefault(id, ""); s.Save(); }
+            else if (Login.Show(Window.GetWindow(this)) is { } who)  // roblox.com sign-in window; writes login.bin
+            {
+                (s.UserId, s.Username) = who;
+                Login.Keep(who.id); s.Accounts[who.id] = who.name; s.Save();
+            }
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or ArgumentException) { StatusText.Text = "Could not switch account: " + ex.Message; }
+        FillAccounts();
+    }
+
+    void Remove_Click(object sender, RoutedEventArgs e)
+    {
+        if (AccountBox.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+        var s = Settings.Current;
+        if (MessageBox.Show(Window.GetWindow(this), $"Remove {s.Accounts.GetValueOrDefault(id, id)} from Skatestrap? You can add it again later.", "Remove account", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        Login.Drop(id); s.Accounts.Remove(id);
+        if (s.UserId == id) { Login.Forget(); s.UserId = s.Username = ""; }  // next Play shows Roblox's sign-in
+        s.Save();
+        FillAccounts();
     }
 
     // the launcher steps aside while the game runs (minimized) and comes back when it closes
     void Running(bool on)
     {
-        PlayButton.IsEnabled = !on; StopButton.IsEnabled = on;
+        PlayButton.IsEnabled = !on; StopButton.IsEnabled = on; AccountBox.IsEnabled = !on;
+        RemoveButton.IsEnabled = !on && AccountBox.SelectedItem is ComboBoxItem { Tag: string };
         if (Window.GetWindow(this) is not { } w) return;  // (null while the page is being built)
         if (on) w.WindowState = WindowState.Minimized;
         else if (w.WindowState == WindowState.Minimized) { w.WindowState = WindowState.Normal; w.Activate(); }
