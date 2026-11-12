@@ -3,7 +3,7 @@
 cd "$(dirname "$0")" || exit 1
 # FSR 1 shaders -> SPIR-V baked into vk_hand.c; rebuilt only when fsr.comp is newer (glslc from the Vulkan SDK)
 for p in easu rcas; do
-    if [ fsr/fsr.comp -nt fsr/$p.inc ]; then
+    if [ fsr/fsr.comp -nt fsr/$p.inc ] && command -v glslc >/dev/null; then  # (a fresh git checkout has random mtimes; the .inc files are committed)
         d=; [ $p = easu ] && d=-DEASU
         glslc -fshader-stage=comp $d -O -mfmt=c -o fsr/$p.inc fsr/fsr.comp || exit 1
     fi

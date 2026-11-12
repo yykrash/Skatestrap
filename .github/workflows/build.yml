@@ -1,0 +1,54 @@
+# Builds loader.exe and Skatestrap.exe from this repo on GitHub's Windows machines.
+# Release builds are signed through SignPath Foundation (see CODE_SIGNING.md); the signing step is added once the
+# project is approved. Until then this uploads the unsigned build as an artifact.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build loader
+        shell: bash
+        run: |
+          clang --version | head -1
+          bash loader/build.sh
+
+      - name: Loader selftest
+        shell: bash
+        continue-on-error: true  # some checks need audio/pad devices a build machine may not have
+        run: ./loader/loader.exe --selftest | tail -3
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build launcher
+        shell: bash
+        run: >
+          dotnet publish launcher/Skatestrap.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out
+
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir -p dist/loader
+          cp out/Skatestrap.exe dist/
+          cp loader/loader.exe dist/loader/
+          sha256sum dist/Skatestrap.exe dist/loader/loader.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Skatestrap-unsigned
+          path: dist/
