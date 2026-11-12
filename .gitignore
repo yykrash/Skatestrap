@@ -1,0 +1,13 @@
+# never commit: logins, keys, logs, builds, Roblox's app or anything taken from it
+cookie*.txt
+*.key
+*.log
+*.apk
+*.so
+*.exe
+*.dll
+*.pdb
+*.map
+bin/
+obj/
+loader/root/

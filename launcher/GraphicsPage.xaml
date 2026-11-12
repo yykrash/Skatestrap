@@ -1,0 +1,83 @@
+<Page x:Class="Skatestrap.GraphicsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="Graphics">
+    <StackPanel Margin="24,8,24,24">
+        <ui:TextBlock FontTypography="Title" Text="Graphics" Margin="0,0,0,12" />
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Desktop24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Renderer" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="Vulkan goes straight to your graphics driver. OpenGL ES (native) asks your driver for OpenGL ES directly; OpenGL ES (ANGLE) translates it to Direct3D 11. The Android app has no Direct3D renderer." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ComboBox x:Name="RendererBox" MinWidth="200" SelectionChanged="Renderer_Changed">
+                <ComboBoxItem Content="Vulkan" Tag="vulkan" />
+                <ComboBoxItem Content="OpenGL ES (ANGLE)" Tag="angle" />
+                <ComboBoxItem Content="OpenGL ES (native)" Tag="native" />
+            </ComboBox>
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Gauge24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Frame rate cap" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Pick one or type a number" />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ComboBox x:Name="FpsBox" MinWidth="200" IsEditable="True" LostFocus="Fps_Changed" SelectionChanged="Fps_Changed">
+                <ComboBoxItem Content="Roblox default (60)" Tag="" />
+                <ComboBoxItem Content="144" Tag="144" />
+                <ComboBoxItem Content="240" Tag="240" />
+                <ComboBoxItem Content="Unlimited" Tag="unlimited" />
+            </ComboBox>
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="ResizeImage24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Render resolution (Vulkan)" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="The game draws fewer pixels and is upscaled to fill the window. Lower = faster on weak graphics, but softer (text too). Only works with the Vulkan renderer." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ComboBox x:Name="ScaleBox" MinWidth="200" SelectionChanged="Scale_Changed">
+                <ComboBoxItem Content="100% (full)" Tag="" />
+                <ComboBoxItem Content="85%" Tag="0.85" />
+                <ComboBoxItem Content="75%" Tag="0.75" />
+                <ComboBoxItem Content="50%" Tag="0.5" />
+            </ComboBox>
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Sparkle24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Sharp upscaling (AMD FSR 1)" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="With Render resolution below 100%, upscales with AMD FidelityFX FSR 1 for sharper edges and text. Off = plain stretch (blurrier)." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="FsrSwitch" Click="Fsr_Click" />
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="FullScreenMaximize24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Launch in fullscreen" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="Starts the game borderless over the whole screen, taskbar hidden. F11 or Alt+Enter switches in game." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="FullSwitch" Click="Full_Click" />
+        </ui:CardControl>
+    </StackPanel>
+</Page>

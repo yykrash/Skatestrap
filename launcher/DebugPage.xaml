@@ -1,0 +1,65 @@
+<Page x:Class="Skatestrap.DebugPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="Debug">
+    <StackPanel Margin="24,8,24,24">
+        <ui:TextBlock FontTypography="Title" Text="Debug" Margin="0,0,0,12" />
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="DataLine24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Frame stats" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Every 5 s in the log: fps, worst gap, render waits, Vulkan call times" />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="FpsSwitch" Click="Changed" />
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Timer24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Profiler" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Samples every thread; report at exit. F8 in game starts counting again" />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="ProfSwitch" Click="Changed" />
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Warning24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Freeze dump" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Writes freeze.dmp when no frame comes for 3 s" />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="DumpSwitch" Click="Changed" />
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Send24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Send run.log" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Text="When the game closes, uploads run.log to krashscripts.xyz for the developer. It holds your username, PC details and game log; login lines are removed first" />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="SendSwitch" Click="Changed" />
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="DocumentText24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="run.log" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Everything the game printed last time it ran" />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:Button Content="Open run.log" Click="OpenLog_Click" />
+        </ui:CardControl>
+    </StackPanel>
+</Page>

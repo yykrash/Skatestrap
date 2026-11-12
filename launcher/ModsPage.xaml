@@ -1,0 +1,37 @@
+<Page x:Class="Skatestrap.ModsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="Mods">
+    <StackPanel Margin="24,8,24,24">
+        <ui:TextBlock FontTypography="Title" Text="Mods" Margin="0,0,0,12" />
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Folder24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="Mods folder" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="Files in the mods folder replace the game's own, same layout as Bloxstrap: content\textures\Cursors\KeyboardMouse\ArrowCursor.png for the cursor, content\fonts\ for fonts." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <StackPanel Orientation="Horizontal">
+                <ui:Button Content="Open folder" Margin="0,0,12,0" Click="Open_Click" />
+                <ui:ToggleSwitch x:Name="ModsSwitch" Click="Changed" />
+            </StackPanel>
+        </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Games24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="PlayStation button icons" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="Roblox shows PlayStation buttons for every controller. PS4 / PS5 pads already get them." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="PsSwitch" Click="Changed" />
+        </ui:CardControl>
+    </StackPanel>
+</Page>

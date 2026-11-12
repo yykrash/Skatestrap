@@ -1,0 +1,18 @@
+<Page x:Class="Skatestrap.AboutPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="About">
+    <StackPanel Margin="24,8,24,24">
+        <ui:TextBlock FontTypography="Title" Text="Skatestrap" />
+        <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,16"
+                      Text="Launcher for Skatestrap: runs the Roblox Android app on Windows so native Luau works." />
+        <ui:TextBlock FontTypography="BodyStrong" Text="Credits" Margin="0,0,0,4" />
+        <ui:TextBlock TextWrapping="Wrap" Text="Look inspired by Voidstrap (KloBraticc, MIT) and Bloxstrap (MIT)." />
+        <ui:TextBlock TextWrapping="Wrap" Text="Start-up and performance settings follow Mocktail." />
+        <ui:TextBlock TextWrapping="Wrap" Text="UI built with WPF-UI by lepo.co (MIT)." />
+        <ui:TextBlock TextWrapping="Wrap" Margin="0,16,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                      Text="Not made by or with Roblox." />
+    </StackPanel>
+</Page>

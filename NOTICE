@@ -1,0 +1,14 @@
+Skatestrap
+Copyright 2026 the Skatestrap authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This project uses ideas and approaches from Mocktail
+(https://github.com/komaruworld/mocktail), Apache License 2.0.
+
+loader/fsr/ contains AMD FidelityFX Super Resolution 1.0 shaders,
+under their own license (loader/fsr/LICENSE.txt).
+
+Skatestrap is not affiliated with or endorsed by Roblox Corporation.
+It does not include any Roblox software: the Roblox Android app is
+downloaded on the user's own machine at first run.
