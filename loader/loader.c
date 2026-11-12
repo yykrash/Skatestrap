@@ -270,9 +270,11 @@ int main(int argc, char **argv) {
     // (a console write is slow) on the game thread that logged it. Exit and crash paths fflush first.
     setvbuf(stdout, 0, _IOFBF, 1 << 16);
     CreateThread(0, 0, flusher, 0, 0, 0);
+    if (argc > 1 && !strcmp(argv[1], "--launcher-update")) { int selfupd_now(void); return selfupd_now(); }
     if (argc > 1 && !strcmp(argv[1], "--gpu")) { int skate_gpu_kind(void); return skate_gpu_kind(); }
     if (argc > 1 && !strcmp(argv[1], "--selftest")) { int shim_fs_selftest(void); int shim_tm_selftest(void); int shim_asset_selftest(void); int shim_net_selftest(void); int shim_futex_selftest(void); int shim_mem_selftest(void); int shim_audio_selftest(void); int shim_pad_selftest(void); int bad = shim_pad_selftest() + shim_audio_selftest() + shim_mem_selftest() + shim_fs_selftest() + shim_tm_selftest() + shim_asset_selftest() + shim_net_selftest() + shim_futex_selftest(); printf("selftest: %d bad\n", bad); return bad != 0; }
     if (argc < 3) { printf("usage: loader libroblox.so patches.bin\n"); return 1; }
+    void selfupd_start(void); selfupd_start();  // launchers before 0.0.12 get the new Skatestrap.exe this way
     size_t size; uint8_t *file = read_file(argv[1], &size);
     Ehdr *eh = (Ehdr *)file;
     if (memcmp(eh->ident, "\x7f" "ELF", 4) || eh->machine != 62) { printf("not an x86-64 ELF\n"); return 1; }

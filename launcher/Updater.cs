@@ -14,7 +14,7 @@ namespace Skatestrap;
 // offsets match). Never blocks play: if the manifest can't be fetched and an APK is already extracted, play continues.
 public static class Updater
 {
-    const string ManifestUrl = "https://krashscripts.xyz/update/manifest.json";
+    static readonly string ManifestUrl = Environment.GetEnvironmentVariable("SKATESTRAP_MANIFEST") ?? "https://krashscripts.xyz/update/manifest.json";  // env: testing only
     static string VersionFile => Path.Combine(Settings.Root, "version.txt");   // our tool version
     static string ApkFile => Path.Combine(Settings.Root, "apk.txt");           // Roblox APK version now extracted
     static string SoPath => Path.Combine(Settings.Root, "extract", "libroblox.so");
@@ -24,7 +24,8 @@ public static class Updater
     public static string Local() => Read(VersionFile, "0.0.0");
     static string Read(string p, string dflt) { try { return File.ReadAllText(p).Trim(); } catch { return dflt; } }
 
-    public static async Task CheckAndApply(Action<string> status)
+    // true = a new Skatestrap.exe was started; close this one
+    public static async Task<bool> CheckAndApply(Action<string> status)
     {
         try
         {
@@ -63,14 +64,19 @@ public static class Updater
                 }
                 catch { foreach (var t in temps) { try { File.Delete(t); } catch { } } throw; }
             }
+
+            // 3. the launcher itself ("launcher" key: launchers before 0.0.12 ignore it, and their new loader.exe swaps it in)
+            if (root.TryGetProperty("launcher", out var la) && await SelfUpdate(la, status)) return true;
             status("");
         }
         catch (Exception ex)
         {
-            LastError = ex.Message;
+            var inner = ex.GetBaseException();  // e.g. "The SSL connection could not be established" hides the real reason
+            LastError = inner == ex ? ex.Message : $"{ex.Message} ({inner.Message})";
             // Offline / server down / bad download. If an APK is already extracted, play on what we have; else surface it.
             status(File.Exists(SoPath) ? "" : "Could not reach the update server, and Roblox is not downloaded yet. Check your connection and reopen.");
         }
+        return false;
     }
 
     // Download the pinned Roblox APK from the store mirror and extract libroblox.so, the helper .so files, and assets.
@@ -147,6 +153,31 @@ public static class Updater
     }
 
     static string Hex(byte[] b) => Convert.ToHexString(b).ToLowerInvariant();
+
+    public static string LauncherVersion => typeof(Updater).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "0.0.0";
+
+    // Replace our own Skatestrap.exe when the manifest has a newer launcher: download beside it, check the hash,
+    // rename the running exe to .old (Windows allows renaming a running exe, not deleting it), move the new one in, restart.
+    // Returns true when the app is restarting.
+    static async Task<bool> SelfUpdate(JsonElement la, Action<string> status)
+    {
+        var me = Path.Combine(Settings.Root, "Skatestrap.exe");
+        var ver = la.GetProperty("version").GetString() ?? "";
+        if (!Newer(ver, LauncherVersion)) return false;  // also keeps an unreleased (newer) build from being replaced
+        if (!string.Equals(Environment.ProcessPath, me, StringComparison.OrdinalIgnoreCase)) return false;  // not the folder's own exe
+        var want = la.GetProperty("sha256").GetString()!.ToLowerInvariant();
+        status($"Updating Skatestrap to v{ver}…");
+        var dl = me + ".download";
+        using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) })  // ~135 MB
+        using (var src = await http.GetStreamAsync(la.GetProperty("url").GetString()!))
+        using (var dst = File.Create(dl)) await src.CopyToAsync(dst);
+        string got; using (var f = File.OpenRead(dl)) got = Hex(await SHA256.HashDataAsync(f));
+        if (got != want) { File.Delete(dl); throw new Exception("launcher update failed the checksum"); }
+        File.Move(me, me + ".old", true);
+        try { File.Move(dl, me); } catch { File.Move(me + ".old", me); throw; }
+        Process.Start(new ProcessStartInfo(me) { WorkingDirectory = Settings.Root, UseShellExecute = false });
+        return true;
+    }
 
     // true if version a is newer than version b (three-part "x.y.z", leading "v" ignored)
     static bool Newer(string a, string b)

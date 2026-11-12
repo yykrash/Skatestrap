@@ -30,6 +30,7 @@ public static class Launcher
         };
         var env = psi.Environment;
         env["SKATESTRAP_WATCH_MS"] = "0";  // unset = the loader quits after 10 s
+        env["SKATESTRAP_SELF_UPDATES"] = "1";  // this launcher updates itself; the loader's swap is only for launchers before 0.0.12
         var login = Login.Cookie();  // handed to the loader in its environment, never written to disk in plain text
         if (login != null)
         {
