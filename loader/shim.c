@@ -164,13 +164,13 @@ static const LW *lw_find(DWORD tid, int64_t before) {  // tid's last wait that e
     return 0;
 }
 static void lw_chain(char *o, size_t n, int64_t t0, DWORD waker, int64_t wake_ns) {
-    int64_t now = now_ns(1); size_t k = 0;
+    int64_t now = now_ns(1); size_t k = 0; const char *skate_tname(DWORD);
 #define P(...) (k += k < n ? snprintf(o + k, n - k, __VA_ARGS__) : 0)
-    P("render waited %.1f ms, woken by %lu %lld us after posting", (now - t0) / 1e6, waker, waker ? (long long)((now - wake_ns) / 1000) : 0);
+    P("render waited %.1f ms, woken by %lu(%s) %lld us after posting", (now - t0) / 1e6, waker, skate_tname(waker), waker ? (long long)((now - wake_ns) / 1000) : 0);
     for (int hop = 0; hop < 6 && waker; hop++) {
         const LW *r = lw_find(waker, wake_ns);
-        if (!r) { P("; %lu: no wait seen (poll/sem/IO?)", waker); break; }
-        P("; %lu: %s %.1f ms, then ran %.1f ms", waker, r->kind == 's' ? "slept" : "futex", (r->end - r->t0) / 1e6, (wake_ns - r->end) / 1e6);
+        if (!r) { P("; %lu(%s): no wait seen (poll/sem/IO?)", waker, skate_tname(waker)); break; }
+        P("; %lu(%s): %s %.1f ms, then ran %.1f ms", waker, skate_tname(waker), r->kind == 's' ? "slept" : "futex", (r->end - r->t0) / 1e6, (wake_ns - r->end) / 1e6);
         if (r->kind == 's' || !r->waker) { if (r->tmo >= 0) P(" (timeout %.1f ms)", r->tmo / 1e6); else P(" (no waker?)"); break; }
         P(" woken by %lu +%lld us", r->waker, (long long)((r->end - r->wake_ns) / 1000));
         waker = r->waker; wake_ns = r->wake_ns;
@@ -202,6 +202,11 @@ static int futex_wake(volatile uint32_t *addr, uint32_t n) {
         FW *w = *pp;
         if (w->addr != addr) { pp = &w->next; continue; }
         *pp = w->next; w->waker = GetCurrentThreadId(); w->wake_ns = now_ns(1);
+        { extern volatile DWORD skate_render_tid;  // last wakers of the render thread: SKATESTRAP_PROF=poster picks its thread from these
+          if (w->tid == skate_render_tid) { extern volatile DWORD skate_wk_tid[8]; extern volatile LONG skate_wk_n; extern volatile long long skate_wk_ns[8];
+            LONG q = InterlockedIncrement(&skate_wk_n) & 7; skate_wk_tid[q] = w->waker; skate_wk_ns[q] = w->wake_ns;
+            extern volatile DWORD skate_pump_tid; extern volatile LONG skate_pump_handoffs;  // the pump skips its nap while it hands work to render
+            if (w->waker == skate_pump_tid) InterlockedIncrement(&skate_pump_handoffs); } }
         InterlockedExchange(&w->woken, 1);  // full barrier; pairs with the waiter's asleep store (one of us sees the other)
         if (w->asleep) { if (w->ev) SetEvent(w->ev); else nt_alert((HANDLE)(uintptr_t)w->tid); }  // still spinning: it sees woken, no kernel call. w lives while we hold the lock
         woke++;

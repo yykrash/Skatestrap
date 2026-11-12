@@ -271,7 +271,7 @@ int main(int argc, char **argv) {
     setvbuf(stdout, 0, _IOFBF, 1 << 16);
     CreateThread(0, 0, flusher, 0, 0, 0);
     if (argc > 1 && !strcmp(argv[1], "--gpu")) { int skate_gpu_kind(void); return skate_gpu_kind(); }
-    if (argc > 1 && !strcmp(argv[1], "--selftest")) { int shim_fs_selftest(void); int shim_tm_selftest(void); int shim_asset_selftest(void); int shim_net_selftest(void); int shim_futex_selftest(void); int shim_mem_selftest(void); int shim_audio_selftest(void); int shim_pad_selftest(void); int bad = shim_pad_selftest() + shim_audio_selftest() + shim_mem_selftest() + shim_fs_selftest() + shim_tm_selftest() + shim_asset_selftest() + shim_net_selftest() + shim_futex_selftest(); printf("selftest: %d bad\n", bad); return bad != 0; }
+    if (argc > 1 && !strcmp(argv[1], "--selftest")) { int shim_fs_selftest(void); int shim_tm_selftest(void); int shim_asset_selftest(void); int shim_net_selftest(void); int shim_futex_selftest(void); int shim_mem_selftest(void); int shim_audio_selftest(void); int shim_pad_selftest(void); int vk_mem_selftest(void); int shim_tname_selftest(void); int bad = shim_tname_selftest() + vk_mem_selftest() + shim_pad_selftest() + shim_audio_selftest() + shim_mem_selftest() + shim_fs_selftest() + shim_tm_selftest() + shim_asset_selftest() + shim_net_selftest() + shim_futex_selftest(); printf("selftest: %d bad\n", bad); return bad != 0; }
     if (argc < 3) { printf("usage: loader libroblox.so patches.bin\n"); return 1; }
     size_t size; uint8_t *file = read_file(argv[1], &size);
     Ehdr *eh = (Ehdr *)file;
@@ -292,6 +292,7 @@ int main(int argc, char **argv) {
     }
     printf("mapped %llu MB at %p\n", (unsigned long long)(span >> 20), (void *)base);
     void prof_start(uint8_t *, uint64_t); prof_start(base, span);  // SKATESTRAP_PROF=1
+    { extern uint8_t *skate_lib_base; extern uint64_t skate_lib_span; skate_lib_base = base; skate_lib_span = span; }
 
     uint64_t rela = 0, jmprel = 0, pltsz = 0;
     for (Dyn *d = (Dyn *)(base + dyn_at); d->tag != DT_NULL; d++) {

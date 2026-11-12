@@ -392,7 +392,32 @@ static SYSV int s_property_get(const char *name, char *value) {
 }
 static SYSV uint64_t s_pthread_self(void) { return GetCurrentThreadId(); }  // shortcut: thread id, not a bionic pthread_internal_t
 static SYSV int s_pthread_equal(uint64_t a, uint64_t b) { return a == b; }
-static SYSV int s_pthread_setname_np(uint64_t t, const char *n) { return 0; }
+// thread names (pthread_setname_np, PR_SET_NAME) so the frame-gap and stall traces can say which Roblox job a tid is.
+// shortcut: hashed table, a dead thread's slot is overwritten when full; names can tear while being set (traces only)
+static struct { volatile DWORD tid; char n[16]; } tnames[512];
+uint8_t *skate_lib_base; uint64_t skate_lib_span;  // libroblox mapping (loader.c), for start-function names in threads.c
+void tname_set(DWORD tid, const char *n) {
+    if (!n) return;
+    unsigned h = (tid >> 2) & 511, i = h;
+    for (int p = 0; p < 16; p++, i = (i + 1) & 511) {
+        DWORD o = tnames[i].tid;
+        if (o == tid || (!o && InterlockedCompareExchange((volatile LONG *)&tnames[i].tid, (LONG)tid, 0) == 0)) break;
+        if (p == 15) { i = h; tnames[i].tid = tid; }
+    }
+    strncpy(tnames[i].n, n, 15); tnames[i].n[15] = 0;
+}
+const char *skate_tname(DWORD tid) {
+    for (unsigned p = 0, i = (tid >> 2) & 511; p < 16; p++, i = (i + 1) & 511) if (tnames[i].tid == tid) return tnames[i].n;
+    return "?";
+}
+static SYSV int s_pthread_setname_np(uint64_t t, const char *n) { tname_set((DWORD)t, n); return 0; }
+int shim_tname_selftest(void) {  // set, rename, long name cut to 15, colliding tids, unknown tid
+    tname_set(4, "a"); tname_set(4, "TaskSchedulerWorker"); tname_set(4 + 512 * 4, "b");
+    int bad = strcmp(skate_tname(4), "TaskSchedulerWo") != 0 || strcmp(skate_tname(4 + 512 * 4), "b") != 0 || strcmp(skate_tname(8), "?") != 0;
+    if (bad) printf("tname selftest: BAD\n");
+    tnames[4 >> 2 & 511].tid = 0; tnames[(4 >> 2) + 1 & 511].tid = 0;  // free the test slots
+    return bad;
+}
 
 // Linux errno texts (bionic's wording); numbers are Linux's, not the Windows CRT's.
 static const char *const errtext[] = {
@@ -428,7 +453,9 @@ static SYSV int s_strerror_r(int e, char *buf, size_t n) {  // POSIX form (bioni
 }
 static SYSV char *s_gnu_strerror_r(int e, char *buf, size_t n) { s_strerror_r(e, buf, n); return buf; }
 static SYSV int s_prctl(int op, uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
-    if (op == 15 || op == 16 || op == 41 || op == 42) return 0;  // PR_SET/GET_NAME, PR_SET/GET_NO_NEW_PRIVS
+    if (op == 15) { tname_set(GetCurrentThreadId(), (const char *)a); return 0; }  // PR_SET_NAME
+    if (op == 16) { const char *n = skate_tname(GetCurrentThreadId()); if (strcmp(n, "?") && n[0] != '@') { strncpy((char *)a, n, 15); ((char *)a)[15] = 0; } return 0; }  // PR_GET_NAME (16-byte buffer); unnamed: left as before
+    if (op == 41 || op == 42) return 0;  // PR_SET/GET_NO_NEW_PRIVS
     if (op == 0x53564d41) { SETERR(22); return -1; }               // PR_SET_VMA: older kernels say EINVAL too
     printf("prctl(%d) not emulated\n", op);
     SETERR(22); return -1;

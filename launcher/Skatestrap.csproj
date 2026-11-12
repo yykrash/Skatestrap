@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>0.0.13</Version>  <!-- launcher self-update compares this to manifest "launcher".version: bump every release -->
+    <Version>0.0.14</Version>  <!-- launcher self-update compares this to manifest "launcher".version: bump every release -->
   </PropertyGroup>
 
   <ItemGroup>

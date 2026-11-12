@@ -84,6 +84,11 @@ static SYSV int s_pthread_create(uint64_t *out, const Attr *a, StartFn fn, void 
     ReleaseSRWLockExclusive(&slots_lock);
     if (!s) printf("pthread_create: thread table full\n");
     *out = tid;
+    {  // name it by its start function (libroblox offset) until it names itself: unnamed threads show up in traces
+        extern uint8_t *skate_lib_base; extern uint64_t skate_lib_span; void tname_set(DWORD, const char *); char nm[16];
+        uint64_t o = (uint64_t)(uintptr_t)fn - (uint64_t)(uintptr_t)skate_lib_base;
+        if (skate_lib_base && o < skate_lib_span) { snprintf(nm, sizeof nm, "@%llx", (unsigned long long)o); tname_set(tid, nm); }
+    }
     SetEvent(b->go);
     return 0;
 }

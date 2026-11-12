@@ -217,16 +217,35 @@ static int tb_char(WCHAR c) {
 }
 static int on_input(UINT m, WPARAM wp, LPARAM lp) {
     static float lx, ly;
+    static int rdrag, rd_cx, rd_cy; static POINT rd_screen;  // right-drag: client and screen spot it was pressed at
     float skate_render_scale(void), k = skate_render_scale();  // the game's pixels, not the window's
     float x = (float)(short)LOWORD(lp) * k, y = (float)(short)HIWORD(lp) * k;
     switch (m) {
     case WM_TB_DRAW: tb_draw(); return 1;
     case WM_MOVE: case WM_SIZE: if (tb_handle) tb_draw(); return 0;  // keep the typed text on its box
-    case WM_MOUSEMOVE: if (in_move) in_move(in_env, in_cls, x, y, x - lx, y - ly); lx = x; ly = y; return 1;
+    case WM_MOUSEMOVE:
+        if (rdrag && !(wp & MK_RBUTTON)) rdrag = 0;  // released outside our messages (alt-tab, lost capture): never keep pinning
+        if (rdrag) {  // right-drag camera: like Windows Roblox, the cursor stays where it was pressed; only the movement goes in
+            int dx = (short)LOWORD(lp) - rd_cx, dy = (short)HIWORD(lp) - rd_cy;
+            if (!dx && !dy) return 1;  // our own SetCursorPos coming back
+            // a virtual position moves with the deltas, so it is right whether Roblox reads positions or deltas
+            if (in_move) in_move(in_env, in_cls, lx + dx * k, ly + dy * k, dx * k, dy * k);
+            lx += dx * k; ly += dy * k;
+            SetCursorPos(rd_screen.x, rd_screen.y);
+            return 1;
+        }
+        if (in_move) in_move(in_env, in_cls, x, y, x - lx, y - ly); lx = x; ly = y; return 1;
     case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP: {
         int down = m == WM_LBUTTONDOWN || m == WM_RBUTTONDOWN || m == WM_MBUTTONDOWN;
         int b = m <= WM_LBUTTONUP ? 0 : m <= WM_RBUTTONUP ? 1 : 2;  // Roblox: left 0, right 1, middle 2
         if (down) SetCapture(GetActiveWindow()); else ReleaseCapture();
+        if (b == 1 && down) { rdrag = 1; rd_cx = (short)LOWORD(lp); rd_cy = (short)HIWORD(lp); GetCursorPos(&rd_screen); lx = x; ly = y; }
+        if (b == 1 && !down && rdrag) {  // release at the virtual spot, then bring Roblox's cursor back to where it was pressed
+            rdrag = 0; float vx = lx, vy = ly; x = rd_cx * k; y = rd_cy * k;
+            if (in_button) in_button(in_env, in_cls, vx, vy, 0, 1);
+            if (in_move) in_move(in_env, in_cls, x, y, 0, 0);  // zero delta: the jump back must not turn the camera
+            lx = x; ly = y; return 1;
+        }
         if (in_button) in_button(in_env, in_cls, x, y, down, b);
         return 1;
     }
@@ -614,6 +633,7 @@ static int join_game(long long place, const char *json) {
 
 // A game picked in the app (ExperienceProtocol launch, any thread): kept here until the pump loop starts it.
 static SRWLOCK launch_lock = SRWLOCK_INIT; static char *launch_json;
+volatile DWORD skate_pump_tid; volatile LONG skate_pump_handoffs; static long skate_pump_hot;  // pump thread, its wakes of render (shim.c)
 static void on_raw_message(void *callback, const char *utf) {
     size_t n = strlen(utf);
     if (!n || n > 64 * 1024) return;
@@ -938,11 +958,16 @@ void skatestrap_startup(void) {
         if (nap_us < 0) { const char *e = getenv("SKATESTRAP_PUMP_US"); nap_us = e ? atoi(e) : 250;
             if (nap_us > 0) nap_t = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
             if (nap_us > 0) printf("  start-up: pump naps %d us (%s timer)\n", nap_us, nap_t ? "high-res" : "no"); }
-        if (spin && nap_t) { LARGE_INTEGER due; due.QuadPart = -(LONGLONG)nap_us * 10;
+        // run L: render and Main hand work back and forth hundreds of times in slow frames, and each nap cost ~0.5 ms.
+        // So no nap within 2 ms of this thread waking the render thread (run M, no nap: worst-gap median 21 -> 6 ms)
+        static LONG seen_ho; static int64_t hot_until; int64_t now_ns(int); int64_t tnow = now_ns(1);
+        skate_pump_tid = GetCurrentThreadId();
+        if (skate_pump_handoffs != seen_ho) { seen_ho = skate_pump_handoffs; hot_until = tnow + 2000000; skate_pump_hot++; }
+        if (spin && nap_t && tnow >= hot_until) { LARGE_INTEGER due; due.QuadPart = -(LONGLONG)nap_us * 10;
             if (SetWaitableTimerEx(nap_t, &due, 0, 0, 0, 0, 0)) MsgWaitForMultipleObjects(1, &nap_t, FALSE, INFINITE, QS_ALLINPUT); }
         if (!spin) MsgWaitForMultipleObjects(0, 0, FALSE, 1, QS_ALLINPUT);
     }
-    printf("  start-up: main-thread pump ran %lu times\n", n);
+    printf("  start-up: main-thread pump ran %lu times, %ld handing work to render\n", n, skate_pump_hot);
     extern volatile long long skate_exec_bytes, skate_exec_calls, skate_exec_fails;
     printf("  native code: %lld KB made executable in %lld calls, %lld failed\n", skate_exec_bytes >> 10, skate_exec_calls, skate_exec_fails);
 }

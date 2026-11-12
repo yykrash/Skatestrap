@@ -69,7 +69,13 @@ static DWORD WINAPI sampler(void *x) {
     for (int tick = 0; !stop; tick++) {
         if (tick % 500 == 0) refresh();
         if (GetAsyncKeyState(VK_F8) & 1) reset();
+        // SKATESTRAP_PROF=render: stall stacks of the render thread only (others not suspended, so fps stays near normal)
+        static int ronly = -1; if (ronly < 0) ronly = getenv("SKATESTRAP_PROF")[0] == 'r';
+        extern volatile DWORD skate_render_tid;
         for (int k = 0; k < nth; k++) {
+            // SKATESTRAP_PROF_THREAD=Main: that named thread too (exact pthread name, leading spaces kept)
+            const char *skate_tname(DWORD); static const char *pt; if (!pt) { pt = getenv("SKATESTRAP_PROF_THREAD"); if (!pt) pt = ""; }
+            if (ronly && th[k].id != skate_render_tid && !(*pt && !strcmp(skate_tname(th[k].id), pt))) continue;
             if (!th[k].h || SuspendThread(th[k].h) == (DWORD)-1) continue;
             CONTEXT c = { .ContextFlags = CONTEXT_CONTROL };
             BOOL ok = GetThreadContext(th[k].h, &c);
@@ -84,11 +90,11 @@ static DWORD WINAPI sampler(void *x) {
             static long long stall_ns, every_ns; if (!stall_ns) { const char *e = getenv("SKATESTRAP_PROF_STALL_MS"), *g = getenv("SKATESTRAP_PROF_EVERY_MS");
                 stall_ns = (e ? atoi(e) : 60) * 1000000ll; every_ns = (g ? atoi(g) : 25) * 1000000ll; }
             int poster = (all ? skate_last_frame_ns != 0 && GetTickCount64() - t0 > (ULONGLONG)(getenv("SKATESTRAP_PROF_SKIP_MS") ? atoi(getenv("SKATESTRAP_PROF_SKIP_MS")) : 20000) :  // skip the loading stalls
-                skate_poster_tid && th[k].id == skate_poster_tid) && now_ns(1) - skate_last_frame_ns > stall_ns;
+                ronly ? skate_last_frame_ns && GetTickCount64() - t0 > 60000 : skate_poster_tid && th[k].id == skate_poster_tid) && now_ns(1) - skate_last_frame_ns > stall_ns;
             if (poster) {  // call stack of the stalled poster: return addresses that follow a call, top 14
                 static int shown; uint64_t fr[14]; int nf = 0, nex = 0; long long tn = now_ns(1);
                 // past the cap: 1/s, so a late freeze still shows
-                if ((shown < (all ? 200000 : 120) ? tn - t->lp > every_ns : tn - t->lp > 1000000000) && SuspendThread(th[k].h) != (DWORD)-1) {
+                if ((shown < (all || ronly ? 200000 : 120) ? tn - t->lp > every_ns : tn - t->lp > 1000000000) && SuspendThread(th[k].h) != (DWORD)-1) {
                     CONTEXT c2 = { .ContextFlags = CONTEXT_FULL };
                     if (GetThreadContext(th[k].h, &c2)) {
                         fr[nf++] = c2.Rip;
@@ -113,7 +119,8 @@ static DWORD WINAPI sampler(void *x) {
                     }
                     ResumeThread(th[k].h);
                     shown++; t->lp = tn;
-                    printf("stall %lld ms t%lu @%lld:", (tn - skate_last_frame_ns) / 1000000, th[k].id, tn / 1000000);
+                    const char *skate_tname(DWORD);
+                    printf("stall %lld ms t%lu(%s) @%lld:", (tn - skate_last_frame_ns) / 1000000, th[k].id, skate_tname(th[k].id), tn / 1000000);
                     for (int q = 0; q < nf; q++) { uint64_t v = fr[q]; if (q && q == nex) printf(" |"); if (v - (uint64_t)lib < libspan) printf(" %llx", (unsigned long long)(v - (uint64_t)lib)); else if (v >= ldr0 && v < ldr1) printf(" L%llx", (unsigned long long)(v - ldr0)); else printf(" win"); }
                     printf("\n");
                 }

@@ -56,6 +56,7 @@ enum { K_FENCE, K_SUBMIT, K_QIDLE, K_DIDLE, K_ACQ, K_QUERY, K_PIPE, K_ALLOC, K_I
 static const char *k_name[K_N] = { "WaitForFences", "QueueSubmit", "QueueWaitIdle", "DeviceWaitIdle", "AcquireNextImage", "GetQueryPoolResults", "CreateGraphicsPipelines", "AllocateMemory", "CreateImage" };
 static volatile LONG64 k_n[K_N], k_ns[K_N], k_max[K_N];
 static int k_on = -1;
+static LONG64 m_plain, m_hit, m_kept, m_freed; static int keep_n; static unsigned long long keep_bytes;  // memory reuse, below
 static LONGLONG k_t(void) { LARGE_INTEGER c; QueryPerformanceCounter(&c); return c.QuadPart; }
 static void k_add(int k, LONGLONG t0) {
     static LARGE_INTEGER f; if (!f.QuadPart) QueryPerformanceFrequency(&f);
@@ -72,6 +73,7 @@ void vk_stats(void) {
         k_n[k] = k_ns[k] = k_max[k] = 0;
     }
     if (any) printf("\n");
+    if (m_plain) { printf("  vulkan memory reuse: %lld plain allocs, %lld reused, %lld kept, %lld freed late, %d blocks / %llu MB kept now\n", m_plain, m_hit, m_kept, m_freed, keep_n, keep_bytes >> 20); m_plain = m_hit = m_kept = m_freed = 0; }
 }
 static SYSV VkResult s_WaitForFences(VkDevice d, uint32_t n, const VkFence *f, VkBool32 all, uint64_t t) { return TIMED(K_FENCE, HOST(vkWaitForFences)(d, n, f, all, t)); }
 static SYSV VkResult s_QueueSubmit(VkQueue q, uint32_t n, const VkSubmitInfo *si, VkFence f) { return TIMED(K_SUBMIT, HOST(vkQueueSubmit)(q, n, si, f)); }
@@ -83,7 +85,115 @@ static SYSV VkResult s_GetQueryPoolResults(VkDevice d, VkQueryPool p, uint32_t f
 static SYSV VkResult s_CreateGraphicsPipelines(VkDevice d, VkPipelineCache c, uint32_t n, const VkGraphicsPipelineCreateInfo *ci, const VkAllocationCallbacks *a, VkPipeline *p) {
     return TIMED(K_PIPE, HOST(vkCreateGraphicsPipelines)(d, c, n, ci, a, p));
 }
-static SYSV VkResult s_AllocateMemory(VkDevice d, const VkMemoryAllocateInfo *ai, const VkAllocationCallbacks *a, VkDeviceMemory *m) { return TIMED(K_ALLOC, HOST(vkAllocateMemory)(d, ai, a, m)); }
+// Freed-memory reuse: the slow 5 s windows (17-37 ms frames) all had 9-209 vkAllocateMemory calls at up to 1.4 ms each on
+// the render thread while new textures streamed in (A/B 2026-11-12). Plain blocks (no pNext) the game frees are kept for
+// up to KEEP_S seconds, within SKATESTRAP_VK_KEEP_MB (default 128, 0 = off), and handed back for the same size + type.
+#define KEEP_N 64
+#define KEEP_S 3
+static SRWLOCK mem_lk = SRWLOCK_INIT;
+static struct { VkDeviceMemory m; VkDeviceSize size; uint32_t type, mapped; } rec[16384];  // plain blocks alive, by handle
+static struct { VkDevice d; VkDeviceMemory m; VkDeviceSize size; uint32_t type; ULONGLONG t; } keep[KEEP_N];
+static int rec_live;
+// default = RAM / 128, at most 128 MB: 4 GB laptops (built-in GPUs keep these blocks in the same RAM) keep 32 MB
+static VkDeviceSize keep_max(void) {
+    static LONG64 v = -1;
+    if (v < 0) {
+        const char *e = getenv("SKATESTRAP_VK_KEEP_MB");
+        MEMORYSTATUSEX ms = { sizeof ms }; GlobalMemoryStatusEx(&ms);
+        LONG64 ram = (LONG64)(ms.ullTotalPhys >> 7);
+        v = e ? atoll(e) << 20 : ram < (128LL << 20) ? ram : 128LL << 20;
+    }
+    return v;
+}
+static int rec_at(VkDeviceMemory m) {  // linear probe; empty slot = not found
+    unsigned i = (unsigned)(((uintptr_t)m >> 4) * 0x9E3779B1u) & 16383;
+    while (rec[i].m && rec[i].m != m) i = (i + 1) & 16383;
+    return i;
+}
+static void rec_del(int i) {  // backward-shift delete keeps probe chains whole
+    for (int j = (i + 1) & 16383; rec[j].m; j = (j + 1) & 16383) {
+        int h = (int)((unsigned)(((uintptr_t)rec[j].m >> 4) * 0x9E3779B1u) & 16383);
+        if (((j - h) & 16383) >= ((j - i) & 16383)) { rec[i] = rec[j]; i = j; }
+    }
+    rec[i].m = 0; rec_live--;
+}
+static void keep_drop(int i) { HOST(vkFreeMemory)(keep[i].d, keep[i].m, 0); keep_bytes -= keep[i].size; keep[i] = keep[--keep_n]; m_freed++; }
+static void keep_age(VkDevice d, int all) {  // lock held; all = drop everything kept for d (or every device if d is 0)
+    ULONGLONG now = GetTickCount64();
+    for (int i = keep_n - 1; i >= 0; i--) if (all ? (!d || keep[i].d == d) : now - keep[i].t > KEEP_S * 1000) keep_drop(i);
+}
+static SYSV VkResult s_AllocateMemory(VkDevice d, const VkMemoryAllocateInfo *ai, const VkAllocationCallbacks *a, VkDeviceMemory *m) {
+    int plain = !ai->pNext && keep_max() > 0;
+    if (plain) {
+        AcquireSRWLockExclusive(&mem_lk);
+        keep_age(d, 0); m_plain++;
+        for (int i = 0; i < keep_n; i++) if (keep[i].d == d && keep[i].size == ai->allocationSize && keep[i].type == ai->memoryTypeIndex) {
+            *m = keep[i].m; keep_bytes -= keep[i].size; keep[i] = keep[--keep_n]; m_hit++;
+            int r = rec_at(*m); rec_live++; rec[r].m = *m; rec[r].size = ai->allocationSize; rec[r].type = ai->memoryTypeIndex; rec[r].mapped = 0;
+            ReleaseSRWLockExclusive(&mem_lk); return VK_SUCCESS;
+        }
+        ReleaseSRWLockExclusive(&mem_lk);
+    }
+    VkResult res = TIMED(K_ALLOC, HOST(vkAllocateMemory)(d, ai, 0, m));
+    if (res == VK_ERROR_OUT_OF_DEVICE_MEMORY || res == VK_ERROR_OUT_OF_HOST_MEMORY) {  // our kept blocks may be in the way
+        AcquireSRWLockExclusive(&mem_lk); int had = keep_n; keep_age(d, 1); ReleaseSRWLockExclusive(&mem_lk);
+        if (had) res = HOST(vkAllocateMemory)(d, ai, 0, m);
+    }
+    if (!res && plain) {
+        AcquireSRWLockExclusive(&mem_lk);
+        if (rec_live < 12000) {  // table nearly full = stop tracking; those blocks are just freed normally
+            int r = rec_at(*m); rec_live++; rec[r].m = *m; rec[r].size = ai->allocationSize; rec[r].type = ai->memoryTypeIndex; rec[r].mapped = 0;
+        }
+        ReleaseSRWLockExclusive(&mem_lk);
+    }
+    return res;
+}
+static SYSV void s_FreeMemory(VkDevice d, VkDeviceMemory m, const VkAllocationCallbacks *a) {
+    if (!m) return;
+    AcquireSRWLockExclusive(&mem_lk);
+    int r = rec_at(m);
+    if (rec[r].m) {
+        VkDeviceSize size = rec[r].size; uint32_t type = rec[r].type, mapped = rec[r].mapped;
+        rec_del(r);
+        if (size <= keep_max() / 4) {  // one big block never fills the whole budget
+            keep_age(d, 0);
+            while (keep_n && (keep_n == KEEP_N || keep_bytes + size > (VkDeviceSize)keep_max())) {  // make room: drop the oldest
+                int o = 0; for (int i = 1; i < keep_n; i++) if (keep[i].t < keep[o].t) o = i;
+                keep_drop(o);
+            }
+            if (mapped) HOST(vkUnmapMemory)(d, m);  // vkFreeMemory would have unmapped it; the next owner maps it fresh
+            keep[keep_n].d = d; keep[keep_n].m = m; keep[keep_n].size = size; keep[keep_n].type = type; keep[keep_n].t = GetTickCount64();
+            keep_n++; keep_bytes += size; m_kept++;
+            ReleaseSRWLockExclusive(&mem_lk); return;
+        }
+    }
+    ReleaseSRWLockExclusive(&mem_lk);
+    HOST(vkFreeMemory)(d, m, 0);
+}
+// Selftest: handle table insert/find/delete with colliding probes (backward-shift delete must keep every chain findable)
+int vk_mem_selftest(void) {
+    int bad = 0; VkDeviceMemory h[3000];
+    for (int i = 0; i < 3000; i++) { h[i] = (VkDeviceMemory)(uintptr_t)(0x10000 + (uintptr_t)i * 16 * 16384 + (i % 3) * 16); /* only 3 home slots: long chains */ int r = rec_at(h[i]); rec[r].m = h[i]; rec[r].size = i; rec_live++; }
+    for (int i = 0; i < 3000; i += 2) rec_del(rec_at(h[i]));
+    for (int i = 0; i < 3000; i++) { int r = rec_at(h[i]); if ((i & 1) ? rec[r].m != h[i] || rec[r].size != (VkDeviceSize)i : rec[r].m != 0) bad++; }
+    if (bad) printf("vk memory reuse selftest: %d bad\n", bad);
+    memset(rec, 0, sizeof rec); rec_live = 0;
+    return bad != 0;
+}
+// shortcut: vkMapMemory2 is not tracked (Vulkan 1.4; Roblox 2.746 uses vkMapMemory), track it too if a later build switches
+static SYSV VkResult s_MapMemory(VkDevice d, VkDeviceMemory m, VkDeviceSize off, VkDeviceSize size, VkMemoryMapFlags fl, void **p) {
+    VkResult res = HOST(vkMapMemory)(d, m, off, size, fl, p);
+    if (!res) { AcquireSRWLockExclusive(&mem_lk); int r = rec_at(m); if (rec[r].m) rec[r].mapped = 1; ReleaseSRWLockExclusive(&mem_lk); }
+    return res;
+}
+static SYSV void s_UnmapMemory(VkDevice d, VkDeviceMemory m) {
+    AcquireSRWLockExclusive(&mem_lk); int r = rec_at(m); if (rec[r].m) rec[r].mapped = 0; ReleaseSRWLockExclusive(&mem_lk);
+    HOST(vkUnmapMemory)(d, m);
+}
+static SYSV void s_DestroyDevice(VkDevice d, const VkAllocationCallbacks *a) {
+    AcquireSRWLockExclusive(&mem_lk); keep_age(d, 1); memset(rec, 0, sizeof rec); rec_live = 0; ReleaseSRWLockExclusive(&mem_lk);  // its handles die with it
+    HOST(vkDestroyDevice)(d, 0);
+}
 static SYSV VkResult s_CreateImage(VkDevice d, const VkImageCreateInfo *ci, const VkAllocationCallbacks *a, VkImage *i) { return TIMED(K_IMAGE, HOST(vkCreateImage)(d, ci, a, i)); }
 
 
@@ -456,7 +566,8 @@ static const struct { const char *name; void *at; } table[] = {
     { "vkGetSwapchainImagesKHR", s_GetSwapchainImagesKHR }, { "vkDestroySwapchainKHR", s_DestroySwapchainKHR },
     { "vkWaitForFences", s_WaitForFences }, { "vkQueueSubmit", s_QueueSubmit }, { "vkQueueWaitIdle", s_QueueWaitIdle },
     { "vkDeviceWaitIdle", s_DeviceWaitIdle }, { "vkGetQueryPoolResults", s_GetQueryPoolResults },
-    { "vkCreateGraphicsPipelines", s_CreateGraphicsPipelines }, { "vkAllocateMemory", s_AllocateMemory }, { "vkCreateImage", s_CreateImage },
+    { "vkCreateGraphicsPipelines", s_CreateGraphicsPipelines }, { "vkAllocateMemory", s_AllocateMemory }, { "vkFreeMemory", s_FreeMemory },
+    { "vkMapMemory", s_MapMemory }, { "vkUnmapMemory", s_UnmapMemory }, { "vkDestroyDevice", s_DestroyDevice }, { "vkCreateImage", s_CreateImage },
 };
 static void *hand(const char *name) {
     for (size_t i = 0; i < sizeof table / sizeof *table; i++) if (!strcmp(table[i].name, name)) return table[i].at;
