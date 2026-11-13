@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write      # build provenance: GitHub signs a record of which commit/workflow made each exe
+  attestations: write
 
 jobs:
   build:
@@ -47,6 +49,10 @@ jobs:
           cp out/Skatestrap.exe dist/
           cp loader/loader.exe dist/loader/
           sha256sum dist/Skatestrap.exe dist/loader/loader.exe
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/Skatestrap.exe, dist/loader/loader.exe'
 
       - uses: actions/upload-artifact@v4
         with:
