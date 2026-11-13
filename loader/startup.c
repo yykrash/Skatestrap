@@ -24,6 +24,8 @@ typedef SYSV void (*Fn2)(void *, void *, void *, void *);
 #define GL "Java_com_roblox_engine_jni_NativeGLInterface_"
 #define SETTINGS "Java_com_roblox_engine_jni_NativeSettingsInterface_"
 #define UA "Roblox/Android (Android 13; Skatestrap on Windows)"  // honest: says what we are
+// PC mode (opt-in, launcher toggle): Roblox's desktop user agent, as Mocktail's pc-windows-11 profile; PC-only games let it join
+static const char *pc_ua(void) { const char *p = getenv("SKATESTRAP_PC_MODE"); return p && *p == '1' ? "Roblox/WinInet" : UA; }
 
 static void *env, *settings;
 static void *need(const char *name) {
@@ -790,7 +792,7 @@ void skatestrap_startup(void) {
     jni_set(pp, "isLuaHomePageEnabled", 1); jni_set(pp, "isLuaGamesPageEnabled", 1); jni_set(pp, "isLuaChatEnabled", 1);
     void *ip = jni_object("com/roblox/engine/jni/autovalue/InitParams");
     jni_set(ip, "platformParams", (uint64_t)pp);
-    jni_set_str(ip, "baseURL", "https://www.roblox.com"); jni_set_str(ip, "userAgent", UA);
+    jni_set_str(ip, "baseURL", "https://www.roblox.com"); jni_set_str(ip, "userAgent", pc_ua());
     jni_set_str(ip, "buildVariant", "googleProdRelease"); jni_set_str(ip, "packageName", "com.roblox.client");
     jni_set_str(ip, "platformName", "Android"); jni_set_str(ip, "appVersion", skatestrap_version());
     jni_set_str(ip, "deviceName", "Skatestrap"); jni_set_str(ip, "locale", "en_us"); jni_set_str(ip, "assetPath", ASSETS);
@@ -804,7 +806,7 @@ void skatestrap_startup(void) {
     FnStart as = need("Java_com_roblox_engine_jni_NativeAppBridgeInterface_nativeAppBridgeAppStart__Ljava_lang_String_2Ljava_lang_String_2ZLjava_lang_String_2Ljava_lang_String_2Ljava_lang_String_2");
     if (as) {
         printf("  start-up: nativeAppBridgeAppStart\n");
-        as(env, bridge, jni_string("https://www.roblox.com/"), jni_string(UA), 0, jni_string("0000000000000000"), jni_string("AppAndroidV"), jni_string(""));
+        as(env, bridge, jni_string("https://www.roblox.com/"), jni_string(pc_ua()), 0, jni_string("0000000000000000"), jni_string("AppAndroidV"), jni_string(""));
     }
     Fn1 v2 = need(GL "nativeAppBridgeV2InitWithParams");
     if (v2) { printf("  start-up: nativeAppBridgeV2InitWithParams\n"); v2(env, jni_class("com/roblox/engine/jni/NativeGLInterface"), ip); }

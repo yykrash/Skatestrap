@@ -50,6 +50,7 @@ public static class Launcher
         if (s.Profiler) env["SKATESTRAP_PROF"] = "1";
         if (s.Fullscreen) env["SKATESTRAP_FULLSCREEN"] = "1";
         if (s.PsIcons) env["SKATESTRAP_PS_ICONS"] = "1";
+        if (s.PcMode) env["SKATESTRAP_PC_MODE"] = "1";
         if (s.Mods && Directory.Exists(Settings.ModsDir)) env["SKATESTRAP_MODS"] = Settings.ModsDir;
         if (s.FreezeDump) env["SKATESTRAP_FREEZE_DUMP"] = Path.Combine(Settings.Root, "freeze.dmp");
         var flags = new Dictionary<string, string>(s.Flags);

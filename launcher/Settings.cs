@@ -22,7 +22,8 @@ public class Settings
     public bool SendLog { get; set; }                      // upload run.log to krashscripts.xyz when the game closes
     public bool Fullscreen { get; set; }                   // SKATESTRAP_FULLSCREEN: start borderless over the whole screen (F11 / Alt+Enter switch)
     public bool PsIcons { get; set; }                      // SKATESTRAP_PS_ICONS: every pad reports as PS4, so Roblox shows PlayStation buttons
-    public string Priority { get; set; } = "normal";       // Windows priority of the game: normal | abovenormal | high
+    public bool PcMode { get; set; }                       // SKATESTRAP_PC_MODE: Roblox/WinInet user agent + PC device (as Mocktail's pc-windows-11 profile)
+    public string Priority { get; set; } = "normal";      // Windows priority of the game: normal | abovenormal | high
     public bool NoGrass { get; set; }                      // grass distance 0 (flags below; a flag typed on the Flags page wins)
     public bool StillGrass { get; set; }                   // grass does not sway
     public string Msaa { get; set; } = "";                 // "" = Roblox decides, else 1 / 2 / 4 / 8 samples

@@ -12,12 +12,14 @@ public partial class ModsPage : Page
         InitializeComponent();
         ModsSwitch.IsChecked = Settings.Current.Mods;
         PsSwitch.IsChecked = Settings.Current.PsIcons;
+        PcSwitch.IsChecked = Settings.Current.PcMode;
     }
 
     void Changed(object sender, RoutedEventArgs e)
     {
         Settings.Current.Mods = ModsSwitch.IsChecked == true;
         Settings.Current.PsIcons = PsSwitch.IsChecked == true;
+        Settings.Current.PcMode = PcSwitch.IsChecked == true;
     }
 
     void Open_Click(object sender, RoutedEventArgs e)

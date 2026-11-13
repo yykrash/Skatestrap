@@ -33,5 +33,17 @@
             </ui:CardControl.Header>
             <ui:ToggleSwitch x:Name="PsSwitch" Click="Changed" />
         </ui:CardControl>
+
+        <ui:CardControl Margin="0,0,0,8">
+            <ui:CardControl.Icon><ui:SymbolIcon Symbol="Desktop24" /></ui:CardControl.Icon>
+            <ui:CardControl.Header>
+                <StackPanel>
+                    <ui:TextBlock FontTypography="BodyStrong" Text="PC mode" />
+                    <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                  Text="Tells Roblox this is a Windows PC, so PC-only games can be joined. Off = Roblox sees an Android device." />
+                </StackPanel>
+            </ui:CardControl.Header>
+            <ui:ToggleSwitch x:Name="PcSwitch" Click="Changed" />
+        </ui:CardControl>
     </StackPanel>
 </Page>
