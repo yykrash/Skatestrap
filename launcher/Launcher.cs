@@ -83,7 +83,9 @@ public static class Launcher
         p.ErrorDataReceived += onLine;
         p.Exited += (_, _) =>
         {
-            p.WaitForExit(); lock (log) { log.WriteLine($"-- loader exited ({p.ExitCode}, 0x{p.ExitCode:X8}) --"); log.Dispose(); } Running = null; Line?.Invoke($"-- loader exited ({p.ExitCode}) --");
+            p.WaitForExit(); lock (log) log.WriteLine($"-- loader exited ({p.ExitCode}, 0x{p.ExitCode:X8}) --"); Running = null; Line?.Invoke($"-- loader exited ({p.ExitCode}) --");
+            if (p.ExitCode != 0) { var said = CrashEvents(p.StartTime); lock (log) log.WriteLine(said); }
+            lock (log) log.Dispose();
             if (s.SendLog) _ = SendLog(login, s.Username);
         };
         p.Start();
@@ -102,6 +104,33 @@ public static class Launcher
         if (!string.IsNullOrEmpty(cookie)) clean = clean.Replace(cookie, "[login removed]");
         const int Max = 1_500_000;  // server takes 2 MB; the end of the log is the part that matters
         return clean.Length > Max ? "[start cut]\n" + clean[^Max..] : clean;
+    }
+
+    // After a crash, copy Windows' own crash records for loader.exe into run.log (Application log: 1000 app error,
+    // 1001 WER report, 1026 .NET). Players don't have to dig through Event Viewer. WER writes a few seconds late.
+    static string CrashEvents(DateTime started)
+    {
+        var o = new System.Text.StringBuilder("-- Windows crash events for loader.exe --\n");
+        try
+        {
+            Thread.Sleep(5000);
+            var since = started.ToUniversalTime().AddSeconds(-5).ToString("o");
+            var q = new System.Diagnostics.Eventing.Reader.EventLogQuery("Application", System.Diagnostics.Eventing.Reader.PathType.LogName,
+                $"*[System[(EventID=1000 or EventID=1001 or EventID=1026) and TimeCreated[@SystemTime>='{since}']]]");
+            using var r = new System.Diagnostics.Eventing.Reader.EventLogReader(q);
+            int n = 0;
+            for (var e = r.ReadEvent(); e != null; e = r.ReadEvent())
+                using (e)
+                {
+                    string msg; try { msg = e.FormatDescription() ?? ""; } catch { msg = string.Join(" | ", e.Properties.Select(x => x.Value)); }
+                    if (!msg.Contains("loader.exe", StringComparison.OrdinalIgnoreCase)) continue;
+                    o.Append($"[{e.TimeCreated:HH:mm:ss}] event {e.Id}:\n{msg.Trim()}\n");
+                    n++;
+                }
+            if (n == 0) o.Append("none found (Windows wrote no crash record for loader.exe)\n");
+        }
+        catch (Exception ex) { o.Append("could not read the Application log: " + ex.Message + "\n"); }
+        return o.ToString();
     }
 
     static async Task SendLog(string? cookie, string username)
