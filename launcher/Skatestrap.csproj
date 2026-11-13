@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>0.0.16</Version>  <!-- launcher self-update compares this to manifest "launcher".version: bump every release -->
+    <Version>0.0.17</Version>  <!-- launcher self-update compares this to manifest "launcher".version: bump every release -->
     <Company>yykrash</Company>
     <Product>Skatestrap</Product>
     <Description>Skatestrap launcher</Description>

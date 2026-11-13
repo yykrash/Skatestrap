@@ -269,8 +269,30 @@ float skate_render_scale(void);
 static VkPhysicalDevice g_pd;  // from the surface-capabilities query that comes before any swapchain
 static struct { VkQueue q; uint32_t fam; } queues[16]; static int nqueues;
 static void note_queue(VkQueue q, uint32_t fam) { for (int i = 0; i < nqueues; i++) if (queues[i].q == q) return; if (nqueues < 16) { queues[nqueues].q = q; queues[nqueues++].fam = fam; } }
-static SYSV void s_GetDeviceQueue(VkDevice d, uint32_t fam, uint32_t idx, VkQueue *q) { HOST(vkGetDeviceQueue)(d, fam, idx, q); note_queue(*q, fam); }
-static SYSV void s_GetDeviceQueue2(VkDevice d, const VkDeviceQueueInfo2 *qi, VkQueue *q) { HOST(vkGetDeviceQueue2)(d, qi, q); note_queue(*q, qi->queueFamilyIndex); }
+static VkDevice g_dev;  // the device the queues came from (Roblox makes one)
+static SYSV void s_GetDeviceQueue(VkDevice d, uint32_t fam, uint32_t idx, VkQueue *q) { HOST(vkGetDeviceQueue)(d, fam, idx, q); note_queue(*q, fam); g_dev = d; }
+static SYSV void s_GetDeviceQueue2(VkDevice d, const VkDeviceQueueInfo2 *qi, VkQueue *q) { HOST(vkGetDeviceQueue2)(d, qi, q); note_queue(*q, qi->queueFamilyIndex); g_dev = d; }
+
+// SKATESTRAP_LOW_LATENCY (off unless "1"; v0.0.17 ships it off, untested in game): at most one frame waits on the GPU. Each present leaves a fence behind
+// its frame's work and returns only once the frame before is done, so the game never builds frames 2-3 ahead of
+// the screen when the GPU is the slow side (each queued frame is a frame of input delay). CPU-bound: the wait is free.
+int skate_low_latency(void) { static int v = -1; if (v < 0) { const char *e = getenv("SKATESTRAP_LOW_LATENCY"); v = (e && e[0] == '1'); } return v; }
+static struct { VkDevice d; VkQueue q; VkFence f[2]; int pending[2], k; } lat;
+static void lat_present(VkQueue q) {
+    if (!g_dev || !skate_low_latency()) return;
+    if (lat.q != q || lat.d != g_dev) {  // first present, or a new device: start over
+        // (an old device's fences are let go, not destroyed: that device may be gone already)
+        memset(&lat, 0, sizeof lat); lat.d = g_dev; lat.q = q;
+        VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        for (int i = 0; i < 2; i++) if (HOST(vkCreateFence)(lat.d, &fi, 0, &lat.f[i])) { lat.q = 0; return; }
+    }
+    int k = lat.k; lat.k ^= 1;
+    if (!HOST(vkQueueSubmit)(q, 0, 0, lat.f[k])) lat.pending[k] = 1;  // signals once everything sent so far is done
+    if (lat.pending[k ^ 1]) {
+        HOST(vkWaitForFences)(lat.d, 1, &lat.f[k ^ 1], VK_TRUE, 100000000ull);  // 100 ms at most: never hang the game
+        HOST(vkResetFences)(lat.d, 1, &lat.f[k ^ 1]); lat.pending[k ^ 1] = 0;
+    }
+}
 
 static SYSV VkResult s_GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice pd, VkSurfaceKHR s, VkSurfaceCapabilitiesKHR *c) {
     g_pd = pd;
@@ -538,6 +560,7 @@ static SYSV VkResult s_QueuePresentKHR(VkQueue q, const VkPresentInfoKHR *pi) {
         if (s) { p2 = *pi; p2.waitSemaphoreCount = 1; p2.pWaitSemaphores = &f->done[pi->pImageIndices[0]]; pi = &p2; }
     }
     VkResult r = HOST(vkQueuePresentKHR)(q, pi);
+    lat_present(q);
     skate_frame(1);
     return r == VK_SUBOPTIMAL_KHR ? VK_SUCCESS : r;
 }

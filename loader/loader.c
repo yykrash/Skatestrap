@@ -151,7 +151,7 @@ static void set_breaks(void) {
 // Raw `syscall` instructions (APK 2.746, found by scripts/rawsys_find.py). Each `0f 05` becomes `int3; nop`, and the
 // handler below answers it as Linux would. Nothing here hides the change: the bytes differ in memory for anyone who reads them.
 // shortcut: fixed offsets for this APK build; rerun the script and update the list when the APK changes
-static const uint64_t raw_sys[] = { 0x2d6e0bb, 0x2d6e0de, 0x2d6e25d, 0x2d6e2ac, 0x2d6e2d6, 0x2d6e35b, 0x2d6e7e9, 0x668447b, 0x66844fb, 0x66845b8, 0x668547f, 0x6685571, 0x668564f, 0x66856d7, 0x6686226, 0x6686bdd };
+static const uint64_t raw_sys[] = { 0x28bdf7b, 0x28bdf9e, 0x28be11d, 0x28be16c, 0x28be196, 0x28be21b, 0x28be6a9, 0x6225869, 0x62258e2, 0x62259a0, 0x6226867, 0x622695d, 0x6226a3b, 0x6226adb, 0x622761a, 0x6227fd8 };
 static int route_raw_syscalls(void) {
     int n = 0;
     for (size_t i = 0; i < sizeof raw_sys / sizeof *raw_sys; i++)

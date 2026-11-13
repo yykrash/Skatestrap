@@ -186,10 +186,23 @@ static EGLBoolean e_QueryContext(EGLDisplay d, EGLContext c, EGLint a, EGLint *v
     *v = a == EGL_CONTEXT_CLIENT_VERSION ? x->major : a == EGL_CONFIG_ID ? x->cfg : a == EGL_CONTEXT_CLIENT_TYPE ? EGL_OPENGL_ES_API : 0;
     return EGL_TRUE;
 }
+// SKATESTRAP_LOW_LATENCY (vk_hand.c): the same one-frame limit here, with a GL fence after each swap
+int skate_low_latency(void);
+static GLsync (WINAPI *fence_sync)(GLenum, GLbitfield);
+static GLenum (WINAPI *client_wait)(GLsync, GLbitfield, GLuint64);
+static void (WINAPI *delete_sync)(GLsync);
+static __thread GLsync t_last;  // the frame before's fence, on the swapping thread's context
 static EGLBoolean e_SwapBuffers(EGLDisplay d, EGLSurface sf) {
     Surf *s = sf;
     if (!s) return fail(EGL_BAD_SURFACE);
-    return s->hwnd ? SwapBuffers(s->dc) : EGL_TRUE;
+    if (!s->hwnd) return EGL_TRUE;
+    BOOL ok = SwapBuffers(s->dc);
+    if (fence_sync && client_wait && delete_sync && skate_low_latency()) {
+        GLsync now = fence_sync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (t_last) { client_wait(t_last, GL_SYNC_FLUSH_COMMANDS_BIT, 100000000ull); delete_sync(t_last); }  // 100 ms at most
+        t_last = now;
+    }
+    return ok;
 }
 static EGLBoolean e_SwapInterval(EGLDisplay d, EGLint i) { return swap_interval ? swap_interval(i) : EGL_TRUE; }
 static const char *e_QueryString(EGLDisplay d, EGLint n) {
@@ -221,6 +234,7 @@ void *wgl_egl_proc(const char *name) {
 // gl* entry points. wglGetProcAddress answers only while a context is current, so start-up resolves
 // them all once inside wgl_begin/wgl_end (driver entry points are the same for every context).
 static HDC boot_dc; static HGLRC boot_rc;
+void *wgl_gl_proc(const char *name);
 int wgl_begin(void) {
     opengl32 = LoadLibraryA("opengl32.dll");
     boot_dc = dummy_dc();
@@ -236,6 +250,7 @@ int wgl_begin(void) {
     if (!boot_rc || !wglMakeCurrent(boot_dc, boot_rc)) { printf("native GL: ES 3.2 context refused (error 0x%lx)\n", GetLastError()); return 0; }
     swap_interval = (void *)wglGetProcAddress("wglSwapIntervalEXT");
     finish = (void *)wglGetProcAddress("glFinish");
+    fence_sync = (void *)wgl_gl_proc("glFenceSync"); client_wait = (void *)wgl_gl_proc("glClientWaitSync"); delete_sync = (void *)wgl_gl_proc("glDeleteSync");
     printf("native GL: %s / %s\n", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
     return 1;
 }
