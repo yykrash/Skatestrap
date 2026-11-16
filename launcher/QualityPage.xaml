@@ -51,7 +51,7 @@
                 <StackPanel>
                     <ui:TextBlock FontTypography="BodyStrong" Text="Anti-aliasing (MSAA)" />
                     <ui:TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
-                                  Text="Smooths jagged edges. Higher costs more GPU." />
+                                  Text="Smooths jagged edges. Higher costs more GPU. Forcing it can blank or scramble 3D item pictures in game menus (ViewportFrames); leave on Roblox decides if they break." />
                 </StackPanel>
             </ui:CardControl.Header>
             <ComboBox x:Name="MsaaBox" MinWidth="200" SelectionChanged="Changed">

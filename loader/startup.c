@@ -103,6 +103,7 @@ static int ext_scan(int s) {  // E0 xx -> evdev
 }
 static void *in_env, *in_cls, *in_gl;
 static SYSV void (*in_move)(void *, void *, float, float, float, float);
+static SYSV unsigned char (*in_locked)(void *, void *);  // nativeGetMainWindowIsMouseLockedCenter: shift lock / first person
 static SYSV void (*in_button)(void *, void *, float, float, uint8_t, int32_t);
 static SYSV void (*in_wheel)(void *, void *, float, float, float);
 static SYSV void (*in_key)(void *, void *, uint8_t, int32_t, int32_t, uint8_t);
@@ -236,7 +237,22 @@ static int on_input(UINT m, WPARAM wp, LPARAM lp) {
             SetCursorPos(rd_screen.x, rd_screen.y);
             return 1;
         }
+        {   // shift lock / first person (MouseBehavior LockCenter): Android's pointer capture. The cursor is held at the
+            // window centre and only the movement goes in; without it the cursor ran into the screen edge and the camera stopped
+            static int lock_on; HWND w = GetActiveWindow();
+            if (in_locked && w && GetForegroundWindow() == w && (in_locked(in_env, in_cls) & 1)) {
+                RECT r; GetClientRect(w, &r); POINT c = { r.right / 2, r.bottom / 2 };
+                int dx = (short)LOWORD(lp) - c.x, dy = (short)HIWORD(lp) - c.y;
+                if (lock_on && !dx && !dy) return 1;  // our own SetCursorPos coming back
+                if (lock_on && in_move) in_move(in_env, in_cls, c.x * k, c.y * k, dx * k, dy * k);  // the first move only centres
+                lock_on = 1; lx = c.x * k; ly = c.y * k;
+                ClientToScreen(w, &c); SetCursorPos(c.x, c.y);
+                return 1;
+            }
+            lock_on = 0;
+        }
         if (in_move) in_move(in_env, in_cls, x, y, x - lx, y - ly); lx = x; ly = y; return 1;
+
     case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_MBUTTONDOWN: case WM_MBUTTONUP: {
         int down = m == WM_LBUTTONDOWN || m == WM_RBUTTONDOWN || m == WM_MBUTTONDOWN;
         int b = m <= WM_LBUTTONUP ? 0 : m <= WM_RBUTTONUP ? 1 : 2;  // Roblox: left 0, right 1, middle 2
@@ -878,6 +894,7 @@ void skatestrap_startup(void) {
         char nm[160];
         in_env = env; in_gl = glc; in_cls = jni_class("com/roblox/engine/jni/NativeInputInterface");
         snprintf(nm, sizeof nm, "%snativePassMouseMove", inp); in_move = need(nm);
+        snprintf(nm, sizeof nm, "%snativeGetMainWindowIsMouseLockedCenter", inp); in_locked = need(nm);
         snprintf(nm, sizeof nm, "%snativePassMouseButton", inp); in_button = need(nm);
         snprintf(nm, sizeof nm, "%snativePassMouseWheel", inp); in_wheel = need(nm);
         in_key = need(GL "nativePassKeyEvent");
